@@ -4,7 +4,7 @@
 An alternate Pebble-HF QRP radio firmware
 
 NOTE: This is experimental firmware and it is not endorsed by or supported by the Pebble developers.
-To receive support for your Pebble radio you should use the official firmware wich is available here:
+To receive support for your Pebble radio you should use the official firmware which is available here:
 https://github.com/mspiceland/usdx-pebblehf
 
 ## Description

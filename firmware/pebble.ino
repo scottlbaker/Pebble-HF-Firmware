@@ -201,9 +201,17 @@ uint8_t prev_stepsize[] = {STEP_1k, STEP_500}; // stepsize for SSB, CW
 char my_name[USERNAME_LENGTH] = {"MYNAME"};
 char my_call[CALLSIGN_LENGTH] = {"MYCALL"};
 
-// CW messages can be edited
+// for stored CW messages $N and $C are shorthand for
+// name and callsign (expanded when message sent)
 #define CW_MESSAGE_LENGTH 48
-char cw_msg[6][CW_MESSAGE_LENGTH];
+char cw_msg[6][CW_MESSAGE_LENGTH] = {
+    "CQ POTA DE $C",
+    "CQ SOTA DE $C",
+    "$C",
+    "GE TKS 5NN 5NN NAME IS $N HW?",
+    "FB RPTR TX 5W ANT EFW 73 CUAGN",
+    "73 GL TU EE"
+};
 
 // string copy
 void cpy(char* dest, char* src) {
@@ -215,26 +223,6 @@ void cpy(char* dest, char* src) {
 void cat(char* dest, char* src) {
   while (*dest != '\0') dest++;
   while ((*dest++ = *src++) != '\0');
-}
-
-// Update CW messages dynamically when callsign or name changes
-void update_cw_messages() {
-  // msg 0
-  cpy(cw_msg[0], "CQ POTA DE ");
-  cat(cw_msg[0], my_call);
-  // msg 1
-  cpy(cw_msg[1], "CQ SOTA DE ");
-  cat(cw_msg[1], my_call);
-  // msg 2
-  cpy(cw_msg[2], my_call);
-  // msg 3
-  cpy(cw_msg[3], "GE TKS 5NN 5NN NAME IS ");
-  cat(cw_msg[3], my_name);
-  cat(cw_msg[3], " HW?");
-  // msg 4
-  cpy(cw_msg[4], "FB RPTR TX 5W ANT EFW 73 CUAGN");
-  // msg 5
-  cpy(cw_msg[5], "73 GL TU EE");
 }
 
 // configuration switches
@@ -2239,10 +2227,33 @@ int cw_tx(char ch) {
 }
 
 // Transmit a CW message string
-void cw_tx_str(char *msg) {
+uint8_t cw_tx_str(char *msg) {
   for (uint8_t i=0; msg[i]; i++)
     if (cw_tx(msg[i])) return 1;
   return 0;
+}
+
+// Transmit an expanded CW message string
+uint8_t cw_tx_msg(char *msg) {
+  char expanded[96];
+  uint8_t out_idx = 0;
+  for (uint8_t i = 0; msg[i] != '\0' && out_idx < sizeof(expanded) - 1; i++) {
+    if (msg[i] == '$' && msg[i + 1] == 'C') {
+      for (uint8_t j = 0; my_call[j] != '\0' && out_idx < sizeof(expanded) - 1; j++) {
+        expanded[out_idx++] = my_call[j];
+      }
+      i++; // skip 'C'
+    } else if (msg[i] == '$' && msg[i + 1] == 'N') {
+      for (uint8_t j = 0; my_name[j] != '\0' && out_idx < sizeof(expanded) - 1; j++) {
+        expanded[out_idx++] = my_name[j];
+      }
+      i++; // skip 'N'
+    } else {
+      expanded[out_idx++] = msg[i];
+    }
+  }
+  expanded[out_idx] = '\0';
+  return cw_tx_str(expanded);
 }
 
 uint8_t rx_ph_q = 90;
@@ -2411,14 +2422,14 @@ void paramAction(uint8_t action, char *value, uint8_t menuid,
     action = UPDATE_MENU;      // fall-through next case
   case UPDATE:
   case UPDATE_MENU:
-    if (menumode != 3)
+    if (menumode != MENU_NEXT)
       pos = 0;
     if (pos >= size)
       pos = 0; // safety clamp
     if (menumode == SELECT_VALUE)
-      menumode = MENU_NEXT; // hack: for strings enter in edit mode
+      menumode = MENU_NEXT; // enter edit mode for strings
     int16_t newval = (int16_t)value[pos] + encoder_val;
-    if (newval < _min || newval == 0)
+    if (newval < _min)
       value[pos] = _min;
     else if (newval > _max)
       value[pos] = _max;
@@ -2431,8 +2442,9 @@ void paramAction(uint8_t action, char *value, uint8_t menuid,
       for (uint8_t i = pos + 1; i < size; i++)
         value[i] = 0; // null-terminate the remainder
     }
-    printlabel(action, menuid, label); // print normal/menu label
-    for (uint8_t i=0; i<13; i++) {
+
+    printlabel(action, menuid, label);
+    for (uint8_t i = 0; i < 13; i++) {
       char ch = value[(pos / 8) * 8 + i];
       if (ch)
         lcd.print(ch);
@@ -2442,7 +2454,7 @@ void paramAction(uint8_t action, char *value, uint8_t menuid,
     lcd.print('\x01'); // print terminator
     lcd_blanks(10);
     if (menumode >= SELECT_VALUE) {
-      lcd.setCursor((pos % 8) + 1, 1); // +1 accounts for the prompt
+      lcd.setCursor((pos % 8) + 1, 1);
       lcd.cursor();
     }
     break;
@@ -2451,7 +2463,7 @@ void paramAction(uint8_t action, char *value, uint8_t menuid,
       if ((value[i - 1] == ' ') || (value[i - 1] == 0))
         value[i - 1] = 0; // remove trailing spaces
       else
-        break; // stop once content found
+        break;
     }
     break;
   default:
@@ -2655,7 +2667,6 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
         else break;
       }
       eeprom_write_block(my_name, (void *)USERNAME_ADDRESS, USERNAME_LENGTH);
-      update_cw_messages();
     } else if (action == SKIP) {
     } else {
       paramAction(action, my_name, 0x56, F("MY NAME"), USERNAME_LENGTH);
@@ -2671,7 +2682,6 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
         else break;
       }
       eeprom_write_block(my_call, (void *)CALLSIGN_ADDRESS, CALLSIGN_LENGTH);
-      update_cw_messages();
     } else if (action == SKIP) {
     } else {
       paramAction(action, my_call, 0x57, F("MY CALL"), CALLSIGN_LENGTH);
@@ -2826,7 +2836,6 @@ void setup() {
     pgm_cache_item(fonts[i], 8);
     lcd.createChar(0x01 + i, _item);
   }
-  update_cw_messages();
 
 #ifdef DEBUG
   // Measure CPU loads
@@ -2925,7 +2934,6 @@ void setup() {
 
   if ((eeprom_version != EEPROM_VERSION) || BUTTON_PRESSED) {
     eeprom_version = EEPROM_VERSION;
-    update_cw_messages();
     paramAction(SAVE); // save default parameter values
     lcd.setCursor(0,1);
     lcd.print(F("Reset settings.."));
@@ -2933,7 +2941,6 @@ void setup() {
     wdt_reset();
   } else {
     paramAction(LOAD);    // load all parameters
-    update_cw_messages(); // ensure CW msgs match loaded name/call
   }
   show_banner();
   si5351.iqmsa = 0; // enforce PLL reset
@@ -3180,7 +3187,7 @@ void loop() {
       }
       if (event == (BR|SC)) {
         // transmit the message
-        cw_tx_str(cw_msg[cwmsg_sel]);
+        cw_tx_msg(cw_msg[cwmsg_sel]);
       }
       event = 0;
     }
@@ -3537,7 +3544,7 @@ void loop() {
   }
   // Check for auto-send CW message
   if ((mode == CW) && (cw_msg_event) && (millis() > cw_msg_event)) {
-    cw_tx_str(cw_msg[cw_msg_id]);
+    cw_tx_msg(cw_msg[cw_msg_id]);
     if (cw_msg_interval &&
       ((cw_msg[cw_msg_id][0] == 'C') && (cw_msg[cw_msg_id][1] == 'Q')))
       cw_msg_event = millis() + (1000 * cw_msg_interval);
