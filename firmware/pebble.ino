@@ -35,6 +35,7 @@
 
 #define VERSION "4.00E"            // firmware version
 #define RELDATE "10-21-26"         // firmware release date
+#define EEPROM_VERSION  1          // increment when eeprom layout changes
 
 // pin definitions
 #define LCD_D4      0   // PD0     (pin 30)
@@ -2313,18 +2314,10 @@ volatile int8_t menu = 0; // current parameter id selected in menu
   byte _item[sz];                                                              \
   memcpy_P(_item, addr, sz); // copy array item from PROGMEM to SRAM
 
-
-// convert a VERSION string into a 16-bit integer
-#define get_version_id()                                                       \
-  ((VERSION[0] - '1') * 2048 +                                                 \
-   ((VERSION[2] - '0') * 10 + (VERSION[3] - '0')) * 32 +                       \
-   ((VERSION[4]) ? (VERSION[4] - 'a' + 1) : 0) * 1)
+#define EEPROM_OFFSET  0x010
 
 uint16_t eeprom_version;
-
-// avoid collision with QCX settings, overwrites text settings
-#define EEPROM_OFFSET  0x010
-int eeprom_addr;
+uint16_t eeprom_addr;
 
 // Support functions for parameter and menu handling
 enum action_t { UPDATE, UPDATE_MENU, NEXT_MENU, LOAD, SAVE, SKIP, NEXT_CH };
@@ -2930,8 +2923,8 @@ void setup() {
   // when stored values are from a different version
   paramAction(LOAD, FW_VER);
 
-  if ((eeprom_version != get_version_id()) || BUTTON_PRESSED) {
-    eeprom_version = get_version_id();
+  if ((eeprom_version != EEPROM_VERSION) || BUTTON_PRESSED) {
+    eeprom_version = EEPROM_VERSION;
     update_cw_messages();
     paramAction(SAVE); // save default parameter values
     lcd.setCursor(0,1);
@@ -2939,7 +2932,7 @@ void setup() {
     delay(500);
     wdt_reset();
   } else {
-    paramAction(LOAD); // load all parameters
+    paramAction(LOAD);    // load all parameters
     update_cw_messages(); // ensure CW msgs match loaded name/call
   }
   show_banner();
