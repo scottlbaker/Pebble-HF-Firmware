@@ -2530,22 +2530,22 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
     paramAction(action, cw_tone, 0x22, F("CW TONE"), cw_tone_label, 0, 1, false);
     break;
   case CWINTERVAL:
-    paramAction(action, cw_msg_interval, 0x42, F("CQ INTERVAL"), NULL, 0, 60, false);
+    paramAction(action, cw_msg_interval, 0x23, F("CQ INTERVAL"), NULL, 1, 60, false);
     break;
   case SEMIQSK:
-    paramAction(action, semi_qsk, 0x23, F("SEMI QSK"), offon_label, 0, 1, false);
+    paramAction(action, semi_qsk, 0x24, F("SEMI QSK"), offon_label, 0, 1, false);
     break;
   case KEY_WPM:
-    paramAction(action, keyer_speed, 0x24, F("KEYER SPEED"), NULL, 1, 60, false);
+    paramAction(action, keyer_speed, 0x25, F("KEYER SPEED"), NULL, 1, 60, false);
     break;
   case KEY_MODE:
-    paramAction(action, keyer_mode, 0x25, F("KEYER MODE"), keyer_mode_label, 0, 3, false);
+    paramAction(action, keyer_mode, 0x26, F("KEYER MODE"), keyer_mode_label, 0, 3, false);
     break;
   case KEY_PIN:
-    paramAction(action, keyer_swap, 0x26, F("KEYER SWAP"), offon_label, 0, 1, false);
+    paramAction(action, keyer_swap, 0x27, F("KEYER SWAP"), offon_label, 0, 1, false);
     break;
   case KEY_TX:
-    paramAction(action, practice, 0x27, F("PRACTICE"), offon_label, 0, 1, false);
+    paramAction(action, practice, 0x28, F("PRACTICE"), offon_label, 0, 1, false);
     break;
   case VOX:
     paramAction(action, vox, 0x31, F("VOX"), offon_label, 0, 1, false);
@@ -2560,7 +2560,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
     paramAction(action, pwm_min, 0x34, F("PA BIAS MIN"), NULL, 0, pwm_max - 1, false);
     break;
   case PWM_MAX:
-    paramAction(action, pwm_max, 0x35, F("PA MAX"), NULL, pwm_min, 255, false);
+    paramAction(action, pwm_max, 0x35, F("PA BIAS MAX"), NULL, pwm_min, 255, false);
     break;
   case SIFXTAL:
     paramAction(action, si5351.fxtal, 0x36, F("REF FRQ"), NULL, 14000000, 28000000, false);
@@ -2598,7 +2598,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
         cwmsg_pick = 1;
         cwmsg_draw();
       } else {
-        printlabel(action, 0x43, F("CW MESSAGES"));
+        printlabel(action, 0x42, F("CW MESSAGES"));
         lcd.print(F("click to open"));
         lcd_blanks(10);
       }
@@ -2643,7 +2643,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
         userinfo_pick = 1;
         userinfo_draw();
       } else {
-        printlabel(action, 0x51, F("USER INFO"));
+        printlabel(action, 0x43, F("USER INFO"));
         lcd.print(F("click to open"));
         lcd_blanks(10);
       }
@@ -2686,7 +2686,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
     break;
   case FW_VER:
     if (action == UPDATE_MENU) {
-      printlabel(action, 0x61, F("FIRMWARE VER"));
+      printlabel(action, 0x44, F("FIRMWARE VER"));
       lcd.print(F(VERSION));
       lcd_blanks(1);
       lcd.print(F(RELDATE));  // release date
@@ -2817,10 +2817,8 @@ void setup() {
     load_rx_avg += load_rx[i];
   }
   load_rx_avg /= 8;
+#endif  // DEBUG
 
-  // adc_stop();  // recover general ADC settings so that analogRead is working
-  // again
-#endif                  // DEBUG
   ADMUX = (1 << REFS0); // restore reference voltage AREF (5V)
   // disable external interrupts
   PCICR = 0;
@@ -2914,7 +2912,7 @@ void setup() {
   for (i = 0; i != 1000; i++) {
     si5351.freq_calc_fast(i);
     si5351.SendPLLRegisterBulk();
-#define SI_SYNTH_PLL_A 26
+    #define SI_SYNTH_PLL_A 26
     for (uint8_t j=4; j<8; j++)
       if (si5351.RecvRegister(SI_SYNTH_PLL_A + j) != si5351.pll_regs[j])
         i2c_error++;
@@ -3113,7 +3111,7 @@ void loop() {
     if (!((event & PL) ||
           (event &
            PLC))) { // hack: if there was long-push before, then fast forward
-      uint16_t v = analogSafeRead(BUTTONS);
+      uint16_t adcval = analogSafeRead(BUTTONS);
       event = SC;
       int32_t t0 = millis();
       while (BUTTON_PRESSED) { // until released or long-press
@@ -3132,18 +3130,20 @@ void loop() {
         }
         wdt_reset();
       }
-      while (BUTTON_PRESSED) { // until released, or encoder is
-                                             // turned while longpress
+      while (BUTTON_PRESSED) {  // until released, or encoder
+                                // is turned while longpress
         if (encoder_val && event == PL) {
           event = PT;
           break;
         }
         wdt_reset();
       }
-      // determine which button pressed based on threshold levels
-      event |= (v < (uint16_t)(4.2 * 1024.0 / 5.0)) ? BL
-             : (v < (uint16_t)(4.8 * 1024.0 / 5.0)) ? BR
-             : BE;
+      // determine which button is pressed
+      #define BE_THRESHOLD 999   // 4.88V
+      #define BR_THRESHOLD 890   // 4.34V
+      if (adcval      > BE_THRESHOLD) event |= BE;
+      else if (adcval > BR_THRESHOLD) event |= BR;
+      else event |= BL;
     } else {        // hack: fast forward handling
       event = (event & 0xf0) | ((encoder_val) ? PT : PLC);
     }
