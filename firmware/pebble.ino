@@ -14,7 +14,8 @@
 // Pebble-HF radio have been removed
 //
 // This firmware supports 20M and 40M Pebble versions
-// with the compiler directives PEBBLE_20M and PEBBLE_40M.
+// but remember, this is a single band radio and you can only select
+// the band that your Pebble is built for.
 //
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the "Software"),
@@ -35,7 +36,7 @@
 
 #define VERSION "4.00E"            // firmware version
 #define RELDATE "10-21-26"         // firmware release date
-#define EEPROM_VERSION  1          // increment when eeprom layout changes
+#define EEPROM_VERSION  2          // increment when eeprom layout changes
 
 // pin definitions
 #define LCD_D4      0   // PD0     (pin 30)
@@ -64,11 +65,22 @@
 #define DIT_PRESSED    !digitalRead(DIT)
 #define DAH_PRESSED    !digitalRead(DAH)
 
-#define NO_SWAP   0      // no swap
-#define SWAP      1      // swap
+#define NO_SWAP   0
+#define SWAP      1
 
-static uint8_t menu_swap   = NO_SWAP;
-static uint8_t rotary_swap = NO_SWAP;
+uint8_t rotxxx_swap = NO_SWAP;
+uint8_t rotary_swap = NO_SWAP;
+
+#define BAND_20M  0
+#define BAND_40M  1
+
+const char *band_label[2] = {"20M", "40M"};
+uint8_t bandsel = BAND_20M;
+
+// band configuration macros
+#define INIT_FREQ       (bandsel == BAND_40M ? 7095000UL : 14047500UL)
+#define FREQ_LIMIT_LOW  (bandsel == BAND_40M ? 7000000UL : 14000000UL)
+#define FREQ_LIMIT_HIGH (bandsel == BAND_40M ? 7300000UL : 14350000UL)
 
 #if (ARDUINO < 10810)
 #if (ARDUINO != 10607)
@@ -87,20 +99,6 @@ static uint8_t rotary_swap = NO_SWAP;
 const char *vfosel_label[] = {"A", "B"};
 const char *mode_label[5] = {"LSB", "USB", "CW ", "FM ", "AM "};
 
-#define PEBBLE_40M
-
-#ifdef  PEBBLE_20M
-#define INIT_FREQ        14047500UL  // initial frequency
-#define FREQ_LIMIT_LOW   14000000UL  // band lower limit
-#define FREQ_LIMIT_HIGH  14350000UL  // band upper limit
-#endif
-
-#ifdef  PEBBLE_40M
-#define INIT_FREQ         7095000UL  // initial frequency
-#define FREQ_LIMIT_LOW    7000000UL  // band lower limit
-#define FREQ_LIMIT_HIGH   7300000UL  // band upper limit
-#endif
-
 #define USERNAME_LENGTH  10
 #define CALLSIGN_LENGTH  10
 
@@ -110,7 +108,7 @@ const char *mode_label[5] = {"LSB", "USB", "CW ", "FM ", "AM "};
 #define USERNAME_ADDRESS 0x3E0   // 0x3E0 -> 0x3EF
 #define CALLSIGN_ADDRESS 0x3F0   // 0x3F0 -> 0x3FF
 
-#define N_PARAMS   32
+#define N_PARAMS   33
 #define I_PARAMS    4
 #define ALL_PARAMS (N_PARAMS + I_PARAMS)
 
@@ -144,24 +142,25 @@ enum params_t {
   IQ_ADJ,        // 26
   QUAD_ACTIVE,   // 27
   ROTARY_SWAP,   // 28
-  PRESET,        // 29   // push BE to open sub-menu
-  CWMSGS,        // 30   // push BE to open sub-menu
-  USER_INFO,     // 31   // push BE to open sub-menu
-  FW_VER,        // 32
+  BAND,          // 29
+  PRESET,        // 30   // push BE to open sub-menu
+  CWMSGS,        // 31   // push BE to open sub-menu
+  USER_INFO,     // 32   // push BE to open sub-menu
+  FW_VER,        // 33
 
   // Invisible parameters that are always saved/loaded
-  FREQA,         // 33
-  FREQB,         // 34
-  MODEA,         // 35
-  MODEB,         // 36
+  FREQA,         // 34
+  FREQB,         // 35
+  MODEA,         // 36
+  MODEB,         // 37
 
   // Optional parameters for debug and calibration
-  CALIB,         // 37
-  SR,            // 38
-  CPULOAD,       // 39
-  PARAM_A,       // 40
-  PARAM_B,       // 41
-  PARAM_C,       // 42
+  CALIB,         // 38
+  SR,            // 39
+  CPULOAD,       // 40
+  PARAM_A,       // 41
+  PARAM_B,       // 42
+  PARAM_C,       // 43
 
   // Internal IDs used only while editing a CW message
   CWMSG1 = 100,
@@ -275,17 +274,17 @@ void cat(char* dest, char* src) {
 #define ULTIMATIC 3      // Ultimatic mode
 
 uint8_t keyer_speed = 25;
-static unsigned long ditTime; // milliseconds per dit
-static uint8_t keyerControl;
-static uint8_t keyerState;
-static uint8_t keyer_mode  = STRAIGHT;
-static uint8_t keyer_swap  = NO_SWAP;
-static uint8_t last_paddle = 0;  // 0=dit, 1=dah (used by Ultimatic mode)
-static uint8_t prev_dit_state = HIGH;
-static uint8_t prev_dah_state = HIGH;
+unsigned long ditTime; // milliseconds per dit
+uint8_t keyerControl;
+uint8_t keyerState;
+uint8_t keyer_mode  = STRAIGHT;
+uint8_t keyer_swap  = NO_SWAP;
+uint8_t last_paddle = 0;  // 0=dit, 1=dah (used by Ultimatic mode)
+uint8_t prev_dit_state = HIGH;
+uint8_t prev_dah_state = HIGH;
 
-static uint32_t ktimer;
-static uint8_t  key_state;
+uint32_t ktimer;
+uint8_t  key_state;
 
 // State machine states
 enum KSTYPE {
@@ -997,7 +996,6 @@ inline int16_t ssb(int16_t in) {
 }
 
 #define MIC_ATTEN  0
-volatile int8_t mox = 0;
 volatile int8_t volume = 12;
 
 // This is the ADC ISR, issued with sample-rate via timer1 compb interrupt.
@@ -1888,12 +1886,14 @@ uint16_t analogSampleMic() {
   return adc;
 }
 
+#define VFOA  0
+#define VFOB  1
+
 volatile bool change = true;
 volatile bool changedMode = 0;
 volatile int32_t freq = INIT_FREQ;
 static int32_t vfo[] = {INIT_FREQ, INIT_FREQ};
 static uint8_t vfomode[] = {CW, CW};
-enum vfo_t { VFOA = 0, VFOB = 1, SPLIT = 2 };
 volatile uint8_t vfosel = VFOA;
 volatile int32_t rit = 0;
 volatile uint8_t semi_qsk = false;
@@ -2009,7 +2009,7 @@ void preset_draw() {
   lcd.setCursor(0,0);
   lcd.print(F("KNOB=go SEL=save"));
   lcd.setCursor(0,1);
-  lcd.print((vfosel % 2) ? '\x07' : '\x06');
+  lcd.print((vfosel) ? '\x07' : '\x06');
   lcd.print(preset_sel + 1); lcd.print(' ');
   uint32_t v = preset_get(preset_sel);
   uint8_t len = 3 + 11;
@@ -2068,8 +2068,7 @@ inline void display_vfo(int32_t freq) {
     return;
   }
   lcd.setCursor(0,1);
-  lcd.print((rit) ? ' ' : ((vfosel % 2) | ((vfosel == SPLIT) & tx))
-                  ? '\x07' : '\x06');
+  lcd.print((rit) ? ' ' : (vfosel ? '\x07' : '\x06'));
   int32_t scale = 10e6;
   if (rit && !tx) {
     freq = rit;     // Show RIT RX offset only
@@ -2158,8 +2157,7 @@ void switch_rxtx(uint8_t tx_enable) {
       }
       si5351.SendRegister(SI_CLK_OE, TX1RX0);
       OCR1AL = 0x80; // make sure SIDETONE is set at 2.5V
-      if ((!mox) && (mode != CW))
-        TCCR1A &= ~(1 << COM1A1);
+      if (mode != CW) TCCR1A &= ~(1 << COM1A1);
       TCCR1A |= (1 << COM1B1); // enable PWM
     }
   } else {
@@ -2277,7 +2275,7 @@ void process_encoder_tuning_step(int8_t steps) {
     rit = max(-99999, min(99999, rit));
   } else {
     freq += steps * stepval;
-    freq = max(1, min(999999999, freq));
+    freq = max(FREQ_LIMIT_LOW, min(FREQ_LIMIT_HIGH, freq));
   }
   change = true;
 }
@@ -2519,7 +2517,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
     paramAction(action, filt, 0x14, F("FILTER BW"), filt_label, 0, _N(filt_label) - 1, false);
     break;
   case VFOSEL:
-    paramAction(action, vfosel, 0x15, F("VFO A/B"), vfosel_label, 0, _N(vfosel_label) - 1, false);
+    paramAction(action, vfosel, 0x15, F("VFO A/B"), vfosel_label, 0, 1, false);
     break;
   case RIT:
     paramAction(action, rit, 0x16, F("RIT"), offon_label, 0, 1, false);
@@ -2588,7 +2586,10 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
     paramAction(action, quad_enabled, 0x38, F("QUAD"), offon_label, 0, 1, false);
     break;
   case ROTARY_SWAP:
-    paramAction(action, menu_swap, 0x39, F("ROTARY SWAP"), offon_label, 0, 1, false);
+    paramAction(action, rotxxx_swap, 0x39, F("ROTARY SWAP"), offon_label, 0, 1, false);
+    break;
+  case BAND:
+    paramAction(action, bandsel, 0x3A, F("PEBBLE BAND"), band_label, 0, 1, false);
     break;
 
   // entry to open the frequency preset sub-menu
@@ -2804,6 +2805,18 @@ void build_lut() {
     lut[i] = (i * (pwm_max - pwm_min)) / 255 + pwm_min;
 }
 
+// check that freq is within the band limits
+void band_check() {
+  if (freq < FREQ_LIMIT_LOW) {
+    freq = FREQ_LIMIT_LOW;
+    vfo[vfosel] = freq;
+  }
+  if (freq > FREQ_LIMIT_HIGH) {
+    freq = FREQ_LIMIT_HIGH;
+    vfo[vfosel] = freq;
+  }
+}
+
 void setup() {
   fastdigitalWrite(PWM_OUT, LOW);
   si5351.powerDown();
@@ -2961,8 +2974,9 @@ void setup() {
   change = true;
   vox = false; // disable VOX
   rit = false; // disable RIT
-  freq = vfo[vfosel % 2];
-  mode = vfomode[vfosel % 2];
+  freq = vfo[vfosel];
+  band_check();
+  mode = vfomode[vfosel];
   build_lut();
   delay(800);
   start_rx();
@@ -3303,8 +3317,8 @@ void loop() {
       stepsize = (rit) ? STEP_10 : prev_stepsize[mode == CW];
       if (!rit) { // after RIT comes VFO A/B swap
         vfosel = !vfosel;
-        freq = vfo[vfosel % 2];
-        mode = vfomode[vfosel % 2];
+        freq = vfo[vfosel];
+        mode = vfomode[vfosel];
         // make more generic:
         if (mode != CW)
           stepsize = STEP_1k;
@@ -3368,8 +3382,8 @@ void loop() {
       prev_filt[prev_mode == CW] = filt;
       filt = prev_filt[mode == CW];
       // paramAction(UPDATE, MODE);
-      vfomode[vfosel % 2] = mode;
-      paramAction(SAVE, (vfosel % 2) ? MODEB : MODEA); // save vfoa/b changes
+      vfomode[vfosel] = mode;
+      paramAction(SAVE, (vfosel) ? MODEB : MODEA); // save vfoa/b changes
       paramAction(SAVE, MODE);
       paramAction(SAVE, FILTER);
       si5351.iqmsa = 0; // enforce PLL reset
@@ -3413,8 +3427,8 @@ void loop() {
         lcd.setCursor(0,1);
         lcd.cursor();
         if (menu == MODE) {
-          vfomode[vfosel % 2] = mode;
-          paramAction(SAVE, (vfosel % 2) ? MODEB : MODEA);
+          vfomode[vfosel] = mode;
+          paramAction(SAVE, (vfosel) ? MODEB : MODEA);
           change = true;
           si5351.iqmsa = 0; // enforce PLL reset
           // make more generic:
@@ -3431,8 +3445,8 @@ void loop() {
 
         // if(menu == NR){ if(mode == CW) nr = false; }
         if (menu == VFOSEL) {
-          freq = vfo[vfosel % 2];
-          mode = vfomode[vfosel % 2];
+          freq = vfo[vfosel];
+          mode = vfomode[vfosel];
           // make more generic:
           if (mode != CW)
             stepsize = STEP_1k;
@@ -3448,6 +3462,9 @@ void loop() {
         if (menu == RIT) {
           stepsize = (rit) ? STEP_10 : STEP_500;
           change = true;
+        }
+        if (menu == BAND) {
+          band_check();
         }
         // if(menu == VOX){ if(vox){ vox_thresh-=1; } else { vox_thresh+=1; }; }
         if (menu == ATT) { // post-handling ATT parameter
@@ -3536,7 +3553,7 @@ void loop() {
       userinfo_draw();
     }
     // hack for reversing rotary-encoder direction
-    if (rotary_swap != menu_swap) rotary_swap = menu_swap;
+    if (rotary_swap != rotxxx_swap) rotary_swap = rotxxx_swap;
     if (encoder_val) {
       process_encoder_tuning_step(encoder_val);
       encoder_val = 0;
@@ -3544,7 +3561,7 @@ void loop() {
   }
   if (change && !tx && !vox_tx) {
     change = false;
-    vfo[vfosel % 2] = freq;
+    vfo[vfosel] = freq;
     // save_event_time = millis() + 1000;
     save_event_time = millis() + 2000;
     if (menumode == NOT_IN_MENU) {
@@ -3563,7 +3580,7 @@ void loop() {
     }
   }
   if (save_event_time && (millis() > save_event_time)) {
-    paramAction(SAVE, (vfosel % 2) ? FREQB : FREQA); // save vfoa/b changes
+    paramAction(SAVE, (vfosel) ? FREQB : FREQA); // save vfoa/b changes
     save_event_time = 0;
   }
   // Check for start of next CW repeating beacon
