@@ -60,18 +60,15 @@
 #define SDA        18   // PC4     (pin 27)
 #define SCL        19   // PC5     (pin 28)
 
-//#define SWAP_ROTARY    1   // Swap rotary direction
-
-#ifdef  SWAP_ROTARY
-#undef  ROT_A
-#undef  ROT_B
-#define ROT_A   7   // PD7     (pin 13)
-#define ROT_B   6   // PD6     (pin 12)
-#endif
-
 #define BUTTON_PRESSED  digitalRead(BUTTONS)
 #define DIT_PRESSED    !digitalRead(DIT)
 #define DAH_PRESSED    !digitalRead(DAH)
+
+#define NO_SWAP   0      // no swap
+#define SWAP      1      // swap
+
+static uint8_t menu_swap   = NO_SWAP;
+static uint8_t rotary_swap = NO_SWAP;
 
 #if (ARDUINO < 10810)
 #if (ARDUINO != 10607)
@@ -113,7 +110,7 @@ const char *mode_label[5] = {"LSB", "USB", "CW ", "FM ", "AM "};
 #define USERNAME_ADDRESS 0x3E0   // 0x3E0 -> 0x3EF
 #define CALLSIGN_ADDRESS 0x3F0   // 0x3F0 -> 0x3FF
 
-#define N_PARAMS   31
+#define N_PARAMS   32
 #define I_PARAMS    4
 #define ALL_PARAMS (N_PARAMS + I_PARAMS)
 
@@ -146,24 +143,25 @@ enum params_t {
   SIFXTAL,       // 25
   IQ_ADJ,        // 26
   QUAD_ACTIVE,   // 27
-  PRESET,        // 28   // push BE to open sub-menu
-  CWMSGS,        // 29   // push BE to open sub-menu
-  USER_INFO,     // 30   // push BE to open sub-menu
-  FW_VER,        // 31
+  ROTARY_SWAP,   // 28
+  PRESET,        // 29   // push BE to open sub-menu
+  CWMSGS,        // 30   // push BE to open sub-menu
+  USER_INFO,     // 31   // push BE to open sub-menu
+  FW_VER,        // 32
 
   // Invisible parameters that are always saved/loaded
-  FREQA,         // 32
-  FREQB,         // 33
-  MODEA,         // 34
-  MODEB,         // 35
+  FREQA,         // 33
+  FREQB,         // 34
+  MODEA,         // 35
+  MODEB,         // 36
 
   // Optional parameters for debug and calibration
-  CALIB,         // 36
-  SR,            // 37
-  CPULOAD,       // 38
-  PARAM_A,       // 39
-  PARAM_B,       // 40
-  PARAM_C,       // 41
+  CALIB,         // 37
+  SR,            // 38
+  CPULOAD,       // 39
+  PARAM_A,       // 40
+  PARAM_B,       // 41
+  PARAM_C,       // 42
 
   // Internal IDs used only while editing a CW message
   CWMSG1 = 100,
@@ -275,9 +273,6 @@ void cat(char* dest, char* src) {
 #define IAMBIC_A  1      // Iambic A
 #define IAMBIC_B  2      // Iambic B
 #define ULTIMATIC 3      // Ultimatic mode
-
-#define NO_SWAP   0      // no swap
-#define SWAP      1      // swap
 
 uint8_t keyer_speed = 25;
 static unsigned long ditTime; // milliseconds per dit
@@ -446,11 +441,15 @@ class Display : public parent {
 Display<LCD> lcd;
 
 volatile int8_t encoder_val = 0;
-static uint8_t last_state;
+static  uint8_t enc_state   = 0;
 
 // Interrupt on rotary encoder turn
 ISR(PCINT2_vect) {
-  switch (last_state = (last_state << 4) | (digitalRead(ROT_B) << 1) | digitalRead(ROT_A)) {
+  if (!rotary_swap)
+    enc_state = (enc_state << 4) | (digitalRead(ROT_B) << 1) | digitalRead(ROT_A);
+  else
+    enc_state = (enc_state << 4) | (digitalRead(ROT_A) << 1) | digitalRead(ROT_B);
+  switch (enc_state) {
     case 0x23:
       encoder_val++;
       break;
@@ -467,7 +466,10 @@ void initEncoder() {
   fastpinMode(ROT_B, INPUT_PULLUP);
   PCMSK2 |= (1 << PCINT22) | (1 << PCINT23);
   PCICR |= (1 << PCIE2);
-  last_state = (digitalRead(ROT_B) << 1) | digitalRead(ROT_A);
+  if (!rotary_swap)
+    enc_state = (digitalRead(ROT_B) << 1) | digitalRead(ROT_A);
+  else
+    enc_state = (digitalRead(ROT_A) << 1) | digitalRead(ROT_B);
   interrupts();
 }
 
@@ -773,8 +775,8 @@ public:
   }
   void powerDown() {
     SendRegister(3, 0b11111111);  // Disable all CLK outputs
-    SendRegister(24, 0b00000000); // Disable state: LOW state when disabled
-    SendRegister(25, 0b00000000); // Disable state: LOW state when disabled
+    SendRegister(24, 0b00000000); // LOW state when disabled
+    SendRegister(25, 0b00000000); // LOW state when disabled
     for (uint8_t addr = 16; addr != 24; addr++)
       SendRegister(addr, 0b10000000); // Conserve power when output is disabled
     SendRegister(187, 0);             // Disable fanout (power-safe)
@@ -2585,6 +2587,9 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
   case QUAD_ACTIVE:
     paramAction(action, quad_enabled, 0x38, F("QUAD"), offon_label, 0, 1, false);
     break;
+  case ROTARY_SWAP:
+    paramAction(action, menu_swap, 0x39, F("ROTARY SWAP"), offon_label, 0, 1, false);
+    break;
 
   // entry to open the frequency preset sub-menu
   case PRESET:
@@ -3530,6 +3535,8 @@ void loop() {
       encoder_val = 0;
       userinfo_draw();
     }
+    // hack for reversing rotary-encoder direction
+    if (rotary_swap != menu_swap) rotary_swap = menu_swap;
     if (encoder_val) {
       process_encoder_tuning_step(encoder_val);
       encoder_val = 0;
