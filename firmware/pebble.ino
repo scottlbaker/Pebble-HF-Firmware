@@ -90,7 +90,7 @@
 const char *vfosel_label[] = {"A", "B"};
 const char *mode_label[5] = {"LSB", "USB", "CW ", "FM ", "AM "};
 
-#define PEBBLE_20M
+#define PEBBLE_40M
 
 #ifdef  PEBBLE_20M
 #define INIT_FREQ        14047500UL  // initial frequency
@@ -1121,7 +1121,7 @@ uint8_t delayWithKeySense(uint32_t ms) {
   return 0;
 }
 
-uint8_t cw_msg_interval = 5; // number of seconds CW message is repeated
+uint8_t cw_msg_interval = 0; // CW message interval diabled
 uint32_t cw_msg_event = 0;
 uint8_t cw_msg_id = 0;       // selected message
 
@@ -2202,6 +2202,8 @@ int cw_tx(char ch) {
     if (sym == ch) {
       // transmit a CW character
       wdt_reset();
+      lcd.setCursor(3, 1);
+      lcd.print(ch);
       uint8_t k = 0x80;
       for (; !(j & k); k >>= 1);
       k >>= 1; // shift start of cw code to MSB
@@ -2228,8 +2230,15 @@ int cw_tx(char ch) {
 
 // Transmit a CW message string
 uint8_t cw_tx_str(char *msg) {
+  // clear the message area
+  lcd.setCursor(3, 1);
+  lcd_blanks(12);
   for (uint8_t i=0; msg[i]; i++)
-    if (cw_tx(msg[i])) return 1;
+    if (cw_tx(msg[i])) break;
+  lcd.setCursor(3, 1);
+  lcd.print(msg);
+  lcd.setCursor(13, 1);
+  lcd_blanks(2);
   return 0;
 }
 
@@ -2535,7 +2544,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
     paramAction(action, cw_tone, 0x22, F("CW TONE"), cw_tone_label, 0, 1, false);
     break;
   case CWINTERVAL:
-    paramAction(action, cw_msg_interval, 0x23, F("CQ INTERVAL"), NULL, 1, 60, false);
+    paramAction(action, cw_msg_interval, 0x23, F("CQ INTERVAL"), NULL, 0, 60, false);
     break;
   case SEMIQSK:
     paramAction(action, semi_qsk, 0x24, F("SEMI QSK"), offon_label, 0, 1, false);
@@ -3181,13 +3190,21 @@ void loop() {
         paramAction(UPDATE_MENU, menu);
       }
       if (event == (BL|SC)) {
+        // cancel any scheduled repeating beacon
+        cw_msg_event = 0;
+        switch_rxtx(0);
         cwmsg_pick = 0;
         show_banner();
         change = true;
       }
       if (event == (BR|SC)) {
         // transmit the message
+        cw_msg_id = cwmsg_sel;
         cw_tx_msg(cw_msg[cwmsg_sel]);
+        // for non-zero interval setup the next event
+        if (cw_msg_interval) {
+          cw_msg_event = millis() + ((uint32_t)cw_msg_interval * 1000UL);
+        }
       }
       event = 0;
     }
@@ -3542,11 +3559,10 @@ void loop() {
     paramAction(SAVE, (vfosel % 2) ? FREQB : FREQA); // save vfoa/b changes
     save_event_time = 0;
   }
-  // Check for auto-send CW message
+  // Check for start of next CW repeating beacon
   if ((mode == CW) && (cw_msg_event) && (millis() > cw_msg_event)) {
     cw_tx_msg(cw_msg[cw_msg_id]);
-    if (cw_msg_interval &&
-      ((cw_msg[cw_msg_id][0] == 'C') && (cw_msg[cw_msg_id][1] == 'Q')))
+    if (cw_msg_interval)
       cw_msg_event = millis() + (1000 * cw_msg_interval);
     else
       cw_msg_event = 0;
