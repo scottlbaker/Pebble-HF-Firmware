@@ -2600,7 +2600,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
         preset_pick = 1; // a click opens the picker
       } else {
         printlabel(action, 0x41, F("FREQ PRESETS"));
-        lcd.print(F("click to open"));
+        lcd.print(F("click ENC =>"));
         lcd_blanks(10);
       }
     } else {
@@ -2619,7 +2619,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
         cwmsg_draw();
       } else {
         printlabel(action, 0x42, F("CW MESSAGES"));
-        lcd.print(F("click to open"));
+        lcd.print(F("click ENC =>"));
         lcd_blanks(10);
       }
     } else {
@@ -2664,7 +2664,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
         userinfo_draw();
       } else {
         printlabel(action, 0x43, F("USER INFO"));
-        lcd.print(F("click to open"));
+        lcd.print(F("click ENC =>"));
         lcd_blanks(10);
       }
     } else {
@@ -3277,8 +3277,7 @@ void loop() {
           _menumode = SELECT_MENU;
         } else if (menu >= CWMSG1 && menu <= CWMSG6) {
           paramAction(SAVE, menu);
-          menu = CWMSGS;
-          _menumode = SELECT_MENU;
+          _menumode = NOT_IN_MENU;
         } else {
           _menumode = NOT_IN_MENU;
           paramAction(SAVE, menu);
@@ -3289,7 +3288,9 @@ void loop() {
     case BL | DC:
       break;
     case BR | SC: // Mode change - Button Right, Single Click
-      changedMode = true;
+      if (!(menumode >= SELECT_VALUE && menu>=CWMSG1 && menu<=CWMSG6)) {
+        changedMode = true;
+      }
       break;
     case BR | DC:
       filt++;
