@@ -3264,31 +3264,24 @@ void loop() {
           menu = 1;
       }
       else if (menumode == SELECT_MENU) {
-        if (menu == FW_VER || menu == PRESET || menu == CWMSGS || menu == USER_INFO) {
+        if (menu == FW_VER || menu == PRESET ||
+            menu == CWMSGS || menu == USER_INFO) {
           _menumode = SELECT_MENU;
         } else {
           _menumode = SELECT_VALUE;
         }
       }
       else if (menumode >= SELECT_VALUE) {
-        if (menu == MY_NAME || menu == MY_CALL) {
-          paramAction(SAVE, menu);
-          menu = USER_INFO;
-          _menumode = SELECT_MENU;
-        } else if (menu >= CWMSG1 && menu <= CWMSG6) {
-          paramAction(SAVE, menu);
-          _menumode = NOT_IN_MENU;
-        } else {
-          _menumode = NOT_IN_MENU;
-          paramAction(SAVE, menu);
-        }
+        paramAction(SAVE, menu);
+        _menumode = NOT_IN_MENU;
       }
       menumode = _menumode;
       break;
     case BL | DC:
       break;
     case BR | SC: // Mode change - Button Right, Single Click
-      if (!(menumode >= SELECT_VALUE && menu>=CWMSG1 && menu<=CWMSG6)) {
+      if (!(menumode >= SELECT_VALUE && (menu >= CWMSG1 && menu <= CWMSG6
+        || menu == MY_NAME || menu == MY_CALL))) {
         changedMode = true;
       }
       break;
