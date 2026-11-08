@@ -35,8 +35,8 @@
 // ============================================================================
 
 #define VERSION "1.00a"            // firmware version
-#define RELDATE "11-07-26"         // firmware release date
-#define EEPROM_VERSION  2          // increment when eeprom layout changes
+#define RELDATE "11-08-26"         // firmware release date
+#define EEPROM_VERSION  1          // track eeprom layout changes
 
 // pin definitions
 #define LCD_D4      0   // PD0     (pin 30)
@@ -162,8 +162,17 @@ enum params_t {
   PARAM_B,       // 42
   PARAM_C,       // 43
 
-  // Internal IDs used only while editing a CW message
-  CWMSG1 = 100,
+  // eeprom addresses for the sub-menu vars
+  PRESET1 = 100,
+  PRESET2,
+  PRESET3,
+  PRESET4,
+  PRESET5,
+  PRESET6,
+  PRESET7,
+  PRESET8,
+
+  CWMSG1,
   CWMSG2,
   CWMSG3,
   CWMSG4,
@@ -1121,7 +1130,7 @@ uint8_t delayWithKeySense(uint32_t ms) {
   return 0;
 }
 
-uint8_t cw_msg_interval = 0; // CW message interval diabled
+uint8_t cw_msg_interval = 0; // CW message repeat interval
 uint32_t cw_msg_event = 0;
 uint8_t cw_msg_id = 0;       // selected message
 
@@ -1133,13 +1142,37 @@ uint8_t cw_msg_id = 0;       // selected message
 
 volatile uint8_t menumode = NOT_IN_MENU;
 
-// used for sub-menus
-uint8_t preset_sel    = 0;   // slot shown in the preset picker
-uint8_t preset_pick   = 0;   // 1 while the preset picker is open
-uint8_t cwmsg_sel     = 0;   // slot shown in the cwmsg picker
-uint8_t cwmsg_pick    = 0;   // 1 while the cwmsg picker is open
-uint8_t userinfo_sel  = 0;   // slot shown in the user info picker
-uint8_t userinfo_pick = 0;   // 1 while the user info picker is open
+// Button event codes (shared by main loop and picker)
+enum event_t {
+  BL  = 0x10,  // button left (menu)
+  BR  = 0x20,  // button right (select)
+  BE  = 0x30,  // button encoder
+  SC  = 0x01,  // single click
+  DC  = 0x02,  // double click
+  PL  = 0x04,  // push long
+  PLC = 0x05,  // push long continuous
+  PT  = 0x0C   // push and turn
+};
+
+// Unified sub-menu picker (presets / CW messages / user info)
+enum picker_t {
+  PICKER_NONE = 0,
+  PICKER_PRESET,
+  PICKER_CWMSG,
+  PICKER_USERINFO
+};
+uint8_t picker_type = PICKER_NONE;
+uint8_t picker_sel  = 0;   // current slot within the active picker
+
+// Menu / parameter action codes (needed by picker before paramAction is defined)
+enum action_t { UPDATE, UPDATE_MENU, NEXT_MENU, LOAD, SAVE, SKIP, NEXT_CH };
+volatile int8_t menu = 0; // current parameter id selected in menu
+
+// Forward declarations used by the picker
+void show_banner();
+void cw_tx_msg(char *msg);
+int8_t paramAction(uint8_t action, uint8_t id = ALL);
+void switch_rxtx(uint8_t tx_enable);
 
 volatile uint8_t cwdec = 1;
 static int32_t avg = 256;
@@ -1210,7 +1243,7 @@ inline void cw_decode() {
 
 // display stepsize with cursor
 void stepsize_showcursor() {
-  if (preset_pick || cwmsg_pick || userinfo_pick) {
+  if (picker_type != PICKER_NONE) {
     lcd.noCursor(); return;
   }
   lcd.setCursor(stepsize+1, 1);
@@ -1947,41 +1980,12 @@ int16_t smeter(int16_t ref = 0) {
   return dbm;
 }
 
-// --- CW-MESSAGE PICKER ---
+// --- UNIFIED PICKER + FREQ PRESETS ---
 
-void cwmsg_draw() {
-  lcd.noCursor();
-  lcd.setCursor(0,0);
-  lcd.print(F("KNOB=sel  ENC=edit"));
-  lcd.setCursor(0,1);
-  lcd.print(cwmsg_sel + 1);
-  lcd.print(F(": "));
-  char *p = cw_msg[cwmsg_sel];
-  for (uint8_t i = 0; i < 12 && p[i]; i++)
-    lcd.print(p[i]);
-  lcd_blanks(10);
-}
+#define N_PRESET   8
+#define N_CWMSG    6
+#define N_USERINFO 2
 
-// --- USER INFO PICKER ---
-
-void userinfo_draw() {
-  lcd.noCursor();
-  lcd.setCursor(0,0);
-  lcd.print(F("KNOB=sel  ENC=edit"));
-  lcd.setCursor(0,1);
-  lcd.print(userinfo_sel + 1);
-  lcd.print(F(": "));
-  char *p = (userinfo_sel == 0) ? my_name : my_call;
-  for (uint8_t i = 0; i < 12 && p[i]; i++) lcd.print(p[i]);
-  lcd_blanks(10);
-}
-
-// --- FREQ_PRESETS_BEGIN ---
-
-// Frequency presets: 8 slots of 3 bytes for freq and 1 byte for mode
-// in their own EEPROM area outside the parameter list.
-
-#define N_PRESET 8
 const uint32_t preset_default[N_PRESET] PROGMEM = {
   14030000UL | ((uint32_t)CW << 24), 14060000UL | ((uint32_t)CW << 24), 14100000UL | ((uint32_t)CW << 24),
   14250000UL | ((uint32_t)USB << 24), 14285000UL | ((uint32_t)USB << 24), 0, 0, 0
@@ -1990,11 +1994,11 @@ const uint32_t preset_default[N_PRESET] PROGMEM = {
 uint32_t preset_get(uint8_t i) {  // 0 = empty slot
   uint32_t v = eeprom_read_dword((const uint32_t *)(PRESET_EEPROM + 4 * i));
   uint32_t f = v & 0xFFFFFFUL;
-  if ((f < FREQ_LIMIT_LOW) || (f > FREQ_LIMIT_HIGH) || ((v >> 24) > AM)) v = pgm_read_dword(&preset_default[i]);
+  if ((f < FREQ_LIMIT_LOW) || (f > FREQ_LIMIT_HIGH) || ((v >> 24) > AM))
+    v = pgm_read_dword(&preset_default[i]);
   return v;
 }
 
-// print the frequency and mode label
 void preset_print(uint32_t v) {
   uint32_t f = v & 0xFFFFFFUL;
   lcd.print(f / 1000000UL); lcd.print('.');
@@ -2003,34 +2007,172 @@ void preset_print(uint32_t v) {
   lcd.print(r); lcd.print(' '); lcd.print(mode_label[v >> 24]);
 }
 
-// top line: the keys; bottom line: active VFO
-void preset_draw() {
+static void picker_draw_preset() {
   lcd.noCursor();
-  lcd.setCursor(0,0);
+  lcd.setCursor(0, 0);
   lcd.print(F("KNOB=go SEL=save"));
-  lcd.setCursor(0,1);
+  lcd.setCursor(0, 1);
   lcd.print((vfosel) ? '\x07' : '\x06');
-  lcd.print(preset_sel + 1); lcd.print(' ');
-  uint32_t v = preset_get(preset_sel);
+  lcd.print(picker_sel + 1);
+  lcd.print(' ');
+  uint32_t v = preset_get(picker_sel);
   uint8_t len = 3 + 11;
-  if (v) { preset_print(v); } else { lcd.print(F("empty")); len = 3 + 5; }
-  for (; len<15; len++) lcd.print(' ');
+  if (v) {
+    preset_print(v);
+  } else {
+    lcd.print(F("empty"));
+    len = 3 + 5;
+  }
+  for (; len < 15; len++) lcd.print(' ');
 }
 
-// store the active VFO's frequency and mode in the shown slot
-void preset_store() {
-  eeprom_write_dword((uint32_t *)(PRESET_EEPROM + 4 * preset_sel), (uint32_t)freq | ((uint32_t)mode << 24));
-  lcd.setCursor(0,1);
+static void picker_draw_cwmsg() {
+  lcd.noCursor();
+  lcd.setCursor(0, 0);
+  lcd_blanks(16);
+  lcd.setCursor(0, 1);
+  lcd.print(picker_sel + 1);
+  lcd.print(F(": "));
+  char *p = cw_msg[picker_sel];
+  for (uint8_t i = 0; i < 12 && p[i]; i++)
+    lcd.print(p[i]);
+  lcd_blanks(10);
+}
+
+static void picker_draw_userinfo() {
+  lcd.noCursor();
+  lcd.setCursor(0, 0);
+  lcd.print(F("KNOB=sel  ENC=edit"));
+  lcd.setCursor(0, 1);
+  lcd.print(picker_sel + 1);
+  lcd.print(F(": "));
+  char *p = (picker_sel == 0) ? my_name : my_call;
+  for (uint8_t i = 0; i < 12 && p[i]; i++)
+    lcd.print(p[i]);
+  lcd_blanks(10);
+}
+
+void picker_draw() {
+  switch (picker_type) {
+    case PICKER_PRESET:   picker_draw_preset();   break;
+    case PICKER_CWMSG:    picker_draw_cwmsg();    break;
+    case PICKER_USERINFO: picker_draw_userinfo(); break;
+    default: break;
+  }
+}
+
+void picker_enter(uint8_t type) {
+  picker_type = type;
+  picker_sel = 0;
+  menumode = NOT_IN_MENU;
+  picker_draw();
+}
+
+void picker_exit() {
+  picker_type = PICKER_NONE;
+  show_banner();
+  change = true;
+}
+
+static void preset_store() {
+  eeprom_write_dword((uint32_t *)(PRESET_EEPROM + 4 * picker_sel),
+                     (uint32_t)freq | ((uint32_t)mode << 24));
+  lcd.setCursor(0, 1);
   lcd.print(F("Saved to "));
-  lcd.print(preset_sel + 1);
+  lcd.print(picker_sel + 1);
   lcd_blanks(5);
   wdt_reset();
   delay(800);
   wdt_reset();
-  preset_draw();
+  picker_draw();
 }
 
-// --- FREQ_PRESETS_END ---
+static void picker_apply_preset() {
+  uint32_t v = preset_get(picker_sel);
+  if (!v) return;
+  freq = v & 0xFFFFFFUL;
+  mode = v >> 24;
+  rit = 0;
+  vfomode[vfosel % 2] = mode;
+  paramAction(SAVE, (vfosel % 2) ? MODEB : MODEA);
+  if (mode != CW) stepsize = STEP_1k;
+  else stepsize = STEP_500;
+  if (mode == CW) {
+    filt = 4;
+    nr = 0;
+  } else {
+    filt = 0;
+  }
+  si5351.iqmsa = 0; // enforce PLL reset
+  picker_exit();
+}
+
+// Handle button events while a picker is open. Returns true if the event was consumed.
+bool picker_handle_event(uint8_t event) {
+  if (picker_type == PICKER_NONE) return false;
+
+  // Menu (left) single-click always cancels
+  if (event == (BL | SC)) {
+    if (picker_type == PICKER_CWMSG) {
+      cw_msg_event = 0;   // cancel any scheduled repeating beacon
+    }
+    picker_exit();
+    return true;
+  }
+
+  switch (picker_type) {
+  case PICKER_PRESET:
+    // Encoder = go (load), Select = save
+    if (event == (BE | SC)) {
+      picker_apply_preset();
+    } else if (event == (BR | SC)) {
+      preset_store();
+    }
+    break;
+
+  case PICKER_CWMSG:
+    // Encoder = edit, Select = send
+    if (event == (BE | SC)) {
+      picker_type = PICKER_NONE;
+      menu = CWMSG1 + picker_sel;
+      menumode = SELECT_VALUE;
+      paramAction(UPDATE_MENU, menu);
+    } else if (event == (BR | SC)) {
+      cw_msg_id = picker_sel;
+      cw_tx_msg(cw_msg[picker_sel]);
+    }
+    break;
+
+  case PICKER_USERINFO:
+    // Encoder = edit, Select = back
+    if (event == (BE | SC)) {
+      picker_type = PICKER_NONE;
+      menu = (picker_sel == 0) ? MY_NAME : MY_CALL;
+      menumode = SELECT_VALUE;
+      paramAction(UPDATE_MENU, menu);
+    }
+    break;
+
+  default:
+    break;
+  }
+  return true; // any event while a picker is open is consumed
+}
+
+void picker_encoder(int8_t delta) {
+  if (picker_type == PICKER_NONE || delta == 0) return;
+  uint8_t count = 0;
+  switch (picker_type) {
+    case PICKER_PRESET:   count = N_PRESET;   break;
+    case PICKER_CWMSG:    count = N_CWMSG;    break;
+    case PICKER_USERINFO: count = N_USERINFO; break;
+    default: return;
+  }
+  picker_sel = (((int16_t)picker_sel + delta) % count + count) % count;
+  picker_draw();
+}
+
+// --- END UNIFIED PICKER ---
 
 // Start radio receiver
 void start_rx() {
@@ -2055,16 +2197,8 @@ uint32_t semi_qsk_timeout = 0;
 
 // display frequency
 inline void display_vfo(int32_t freq) {
-  if (preset_pick) {
-    preset_draw();
-    return;
-  }
-  if (cwmsg_pick) {
-    cwmsg_draw();
-    return;
-  }
-  if (userinfo_pick) {
-    userinfo_draw();
+  if (picker_type != PICKER_NONE) {
+    picker_draw();
     return;
   }
   lcd.setCursor(0,1);
@@ -2179,12 +2313,15 @@ void switch_rxtx(uint8_t tx_enable) {
       si5351.SendRegister(18, 0x0f); // disable invert on CLK2
     }
     si5351.SendRegister(SI_CLK_OE, TX0RX1);
-    if ((!semi_qsk_timeout) ||
-        (!semi_qsk)) // enable RX when no longer in semi-qsk phase
-    {
-      fastdigitalWrite(RX,
-                       !(att == 2)); // RX (enable RX when attenuator not on)
+    // enable RX when not in semi-qsk phase and attenuator off
+    if ((!semi_qsk_timeout) || (!semi_qsk)) {
+      fastdigitalWrite(RX, !(att == 2));
     }
+
+    delay(1);                   // decoder blanking fix
+    sym = 1;                    // reset partial decoder symbol state
+    filteredstate = LOW;        // force clean baseline state
+    filteredstatebefore = LOW;
 
     si5351.freq_calc_fast(rit);
     si5351.SendPLLRegisterBulk(); // restore original PLL RX frequency
@@ -2243,7 +2380,7 @@ uint8_t cw_tx_str(char *msg) {
 }
 
 // Transmit an expanded CW message string
-uint8_t cw_tx_msg(char *msg) {
+void cw_tx_msg(char *msg) {
   char expanded[96];
   uint8_t out_idx = 0;
   for (uint8_t i = 0; msg[i] != '\0' && out_idx < sizeof(expanded) - 1; i++) {
@@ -2262,7 +2399,15 @@ uint8_t cw_tx_msg(char *msg) {
     }
   }
   expanded[out_idx] = '\0';
-  return cw_tx_str(expanded);
+  cw_tx_str(expanded);
+  // clear the decoder output buffer
+  for (uint8_t i = 0; i < 16; i++) out[i] = ' ';
+  // setup the next CW message event
+  cw_msg_event = 0;
+  if (cw_msg_interval && (cw_msg[cw_msg_id][0] == 'C') &&
+     (cw_msg[cw_msg_id][1] == 'Q')) {
+    cw_msg_event = millis() + (1000 * cw_msg_interval);
+  }
 }
 
 uint8_t rx_ph_q = 90;
@@ -2328,7 +2473,6 @@ void show_banner() {
 
 volatile uint8_t event;
 volatile uint8_t prev_menumode = NOT_IN_MENU;
-volatile int8_t menu = 0; // current parameter id selected in menu
 
 #define pgm_cache_item(addr, sz)                                               \
   byte _item[sz];                                                              \
@@ -2340,7 +2484,6 @@ uint16_t eeprom_version;
 uint16_t eeprom_addr;
 
 // Support functions for parameter and menu handling
-enum action_t { UPDATE, UPDATE_MENU, NEXT_MENU, LOAD, SAVE, SKIP, NEXT_CH };
 
 // output menuid in x.y format
 void printmenuid(uint8_t menuid) {
@@ -2483,16 +2626,22 @@ void paramAction(uint8_t action, char *value, uint8_t menuid,
 
 #define _N(a) sizeof(a) / sizeof(a[0])
 
-int8_t paramAction(uint8_t action, uint8_t id = ALL) {
+int8_t paramAction(uint8_t action, uint8_t id) {
   if ((action == SAVE) || (action == LOAD)) {
     if (id == ALL) {
       eeprom_addr = EEPROM_OFFSET;
       for (uint8_t _id = 1; _id <= ALL_PARAMS; _id++) {
         paramAction(action, _id);
       }
-      // CW messages live outside the sequential area
+      // include frequency presets
+      for (uint8_t i = 0; i < 6; i++)
+        paramAction(action, (uint8_t)(PRESET1 + i));
+      // include CW messages
       for (uint8_t i = 0; i < 6; i++)
         paramAction(action, (uint8_t)(CWMSG1 + i));
+      // include user info
+      paramAction(action, MY_NAME);
+      paramAction(action, MY_CALL);
       return ALL;
     } else {
       eeprom_addr = EEPROM_OFFSET;
@@ -2596,8 +2745,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
   case PRESET:
     if (action == UPDATE_MENU) {
       if (menumode >= SELECT_VALUE) {
-        menumode = NOT_IN_MENU;
-        preset_pick = 1; // a click opens the picker
+        picker_enter(PICKER_PRESET);
       } else {
         printlabel(action, 0x41, F("FREQ PRESETS"));
         lcd.print(F("click ENC =>"));
@@ -2609,14 +2757,31 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
       actionCommon(action, &dummy_preset, sizeof(dummy_preset));
     }
     break;
-
+  // the eight presets (fixed EEPROM addresses)
+  case PRESET1: case PRESET2: case PRESET3: case PRESET4:
+  case PRESET5: case PRESET6: case PRESET7: case PRESET8: {
+    uint8_t idx = id - PRESET1;
+    uint16_t addr = PRESET_EEPROM + 4 * idx;
+    if (action == LOAD) {
+      // If the stored EEPROM value is invalid, preset_get() will fall back to defaults,
+      // but this ensures explicit loading happens during an ALL load.
+      uint32_t v = preset_get(idx);
+      eeprom_write_dword((uint32_t *)addr, v); // ensure valid fallback is written if blank
+    } else if (action == SAVE) {
+      // Presets are normally saved via preset_store(), but this covers bulk SAVE operations.
+      // We can grab the current preset value via preset_get(idx) and persist it.
+      uint32_t v = preset_get(idx);
+      eeprom_write_dword((uint32_t *)addr, v);
+    } else if (action == SKIP) {
+      // not part of sequential layout
+    }
+    break;
+  }
   // entry to open the CW-message sub-menu
   case CWMSGS:
     if (action == UPDATE_MENU) {
       if (menumode >= SELECT_VALUE) {
-        menumode = NOT_IN_MENU;
-        cwmsg_pick = 1;
-        cwmsg_draw();
+        picker_enter(PICKER_CWMSG);
       } else {
         printlabel(action, 0x42, F("CW MESSAGES"));
         lcd.print(F("click ENC =>"));
@@ -2659,9 +2824,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
   case USER_INFO:
     if (action == UPDATE_MENU) {
       if (menumode >= SELECT_VALUE) {
-        menumode = NOT_IN_MENU;
-        userinfo_pick = 1;
-        userinfo_draw();
+        picker_enter(PICKER_USERINFO);
       } else {
         printlabel(action, 0x43, F("USER INFO"));
         lcd.print(F("click ENC =>"));
@@ -3017,7 +3180,7 @@ void loop() {
 
   if ((mode == CW) && cwdec && (!tx && !semi_qsk_timeout))
     cw_decode(); // CW decoder only active during RX
-  if ((menumode == NOT_IN_MENU) && !preset_pick && !cwmsg_pick && !userinfo_pick) {
+  if ((menumode == NOT_IN_MENU) && (picker_type == PICKER_NONE)) {
     if (cw_event) {
       const char offv[] = {0, 7, 3, 5, 3, 7, 8};
       uint8_t offset = offv[smode];
@@ -3125,16 +3288,7 @@ void loop() {
 
   // button-left, button-right, button-encoder
   // single-click, double-click, push-long, push-and-turn
-  enum event_t {
-    BL  = 0x10,
-    BR  = 0x20,
-    BE  = 0x30,
-    SC  = 0x01,
-    DC  = 0x02,
-    PL  = 0x04,
-    PLC = 0x05,
-    PT  = 0x0C
-  };
+  // (event codes defined at file scope)
 
   if (BUTTON_PRESSED) {
     // Left-/Right-/Rotary-button (while not already pressed)
@@ -3177,72 +3331,8 @@ void loop() {
     } else {        // hack: fast forward handling
       event = (event & 0xf0) | ((encoder_val) ? PT : PLC);
     }
-    if (preset_pick) {
-      // press Encoder=go  press Select=store  press Menu=cancel
-      if ((event == (BE|SC)) && preset_get(preset_sel)) {
-        uint32_t v = preset_get(preset_sel);
-        freq = v & 0xFFFFFFUL; mode = v >> 24; rit = 0;
-        vfomode[vfosel%2] = mode;
-        paramAction(SAVE, (vfosel%2) ? MODEB : MODEA);
-        if (mode != CW) stepsize = STEP_1k; else stepsize = STEP_500;
-        if (mode == CW) {
-          filt = 4;
-          nr = 0;
-        } else filt = 0;
-        si5351.iqmsa = 0;  // enforce PLL reset
-        preset_pick = 0;
-        show_banner();
-        change = true;
-      }
-      if (event == (BL|SC)) {
-        preset_pick = 0;
-        show_banner();
-        change = true;
-      }
-      if (event == (BR|SC)) preset_store();
-      event = 0;
-    }
-    if (cwmsg_pick) {
-      // press Encoder=edit  press Select=send  press Menu=cancel
-      if (event == (BE|SC)) {
-        cwmsg_pick = 0;
-        menu = CWMSG1 + cwmsg_sel;
-        menumode = SELECT_VALUE;
-        paramAction(UPDATE_MENU, menu);
-      }
-      if (event == (BL|SC)) {
-        // cancel any scheduled repeating beacon
-        cw_msg_event = 0;
-        switch_rxtx(0);
-        cwmsg_pick = 0;
-        show_banner();
-        change = true;
-      }
-      if (event == (BR|SC)) {
-        // transmit the message
-        cw_msg_id = cwmsg_sel;
-        cw_tx_msg(cw_msg[cwmsg_sel]);
-        // for non-zero interval setup the next event
-        if (cw_msg_interval) {
-          cw_msg_event = millis() + ((uint32_t)cw_msg_interval * 1000UL);
-        }
-      }
-      event = 0;
-    }
-    if (userinfo_pick) {
-      // press Encoder=edit  press Select=back/cancel  press Menu=cancel
-      if (event == (BE|SC)) {
-        userinfo_pick = 0;
-        menu = (userinfo_sel == 0) ? MY_NAME : MY_CALL;
-        menumode = SELECT_VALUE;
-        paramAction(UPDATE_MENU, menu);
-      }
-      if (event == (BL|SC)) {
-        userinfo_pick = 0;
-        show_banner();
-        change = true;
-      }
-      event = 0;
+    if (picker_handle_event(event)) {
+      event = 0; // picker consumed the event
     }
     switch (event) {
     case BL | PL:  // Called when menu button pressed
@@ -3530,29 +3620,18 @@ void loop() {
     }
   }
   if (menumode == NOT_IN_MENU) {
-    if (preset_pick && encoder_val) {
-      // scroll the preset picker
-      preset_sel = (((int16_t)preset_sel + encoder_val) % N_PRESET + N_PRESET) % N_PRESET;
-      encoder_val = 0;
-      preset_draw();
-    }
-    else if (cwmsg_pick && encoder_val) {
-      // scroll the CW message picker
-      cwmsg_sel = (((int16_t)cwmsg_sel + encoder_val) % 6 + 6) % 6;
-      encoder_val = 0;
-      cwmsg_draw();
-    }
-    else if (userinfo_pick && encoder_val) {
-      // scroll the user info picker (2 items: Name and Callsign)
-      userinfo_sel = (((int16_t)userinfo_sel + encoder_val) % 2 + 2) % 2;
-      encoder_val = 0;
-      userinfo_draw();
-    }
-    // hack for reversing rotary-encoder direction
-    if (rotary_swap != rotxxx_swap) rotary_swap = rotxxx_swap;
-    if (encoder_val) {
-      process_encoder_tuning_step(encoder_val);
-      encoder_val = 0;
+    if (picker_type != PICKER_NONE) {
+      if (encoder_val) {
+        picker_encoder(encoder_val);
+        encoder_val = 0;
+      }
+    } else {
+      // hack for reversing rotary-encoder direction
+      if (rotary_swap != rotxxx_swap) rotary_swap = rotxxx_swap;
+      if (encoder_val) {
+        process_encoder_tuning_step(encoder_val);
+        encoder_val = 0;
+      }
     }
   }
   if (change && !tx && !vox_tx) {
@@ -3582,10 +3661,6 @@ void loop() {
   // Check for start of next CW repeating beacon
   if ((mode == CW) && (cw_msg_event) && (millis() > cw_msg_event)) {
     cw_tx_msg(cw_msg[cw_msg_id]);
-    if (cw_msg_interval)
-      cw_msg_event = millis() + (1000 * cw_msg_interval);
-    else
-      cw_msg_event = 0;
   }
   wdt_reset();
 }
