@@ -34,8 +34,8 @@
 //
 // ============================================================================
 
-#define VERSION "4.00E"            // firmware version
-#define RELDATE "10-21-26"         // firmware release date
+#define VERSION "1.00a"            // firmware version
+#define RELDATE "11-07-26"         // firmware release date
 #define EEPROM_VERSION  2          // increment when eeprom layout changes
 
 // pin definitions
@@ -439,60 +439,60 @@ class Display : public parent {
 
 Display<LCD> lcd;
 
-volatile int8_t encoder_val = 0;
-static  uint8_t enc_state   = 0;
+volatile int8_t  encoder_val = 0;
+volatile uint8_t enc_state = 0;
+volatile int8_t  enc_accum = 0;
 
 // Interrupt on rotary encoder turn
 ISR(PCINT2_vect) {
-  if (!rotary_swap)
-    enc_state = (enc_state << 4) | (digitalRead(ROT_B) << 1) | digitalRead(ROT_A);
-  else
-    enc_state = (enc_state << 4) | (digitalRead(ROT_A) << 1) | digitalRead(ROT_B);
-  switch (enc_state) {
-    case 0x23:
+  uint8_t curr = (digitalRead(ROT_B) << 1) | digitalRead(ROT_A);
+  if (rotary_swap) curr = ((curr & 1) << 1) | (curr >> 1);
+  static const int8_t table[16] = {
+     0, -1,  1,  0,
+     1,  0,  0, -1,
+    -1,  0,  0,  1,
+     0,  1, -1,  0
+  };
+  int8_t delta = table[(enc_state << 2) | curr];
+  enc_state = curr;
+  if (delta) {
+    if ((delta>0 && enc_accum<0)||(delta<0 && enc_accum>0)) enc_accum = 0;
+    enc_accum += delta;
+    if (enc_accum >= 4) {
       encoder_val++;
-      break;
-    case 0x32:
+      enc_accum = 0;
+    } else if (enc_accum <= -4) {
       encoder_val--;
-      break;
-    default:
-      break;
+      enc_accum = 0;
+    }
   }
 }
 
+// initialise the encoder state machine
 void initEncoder() {
-  fastpinMode(ROT_A, INPUT_PULLUP);
-  fastpinMode(ROT_B, INPUT_PULLUP);
+  enc_state = (digitalRead(ROT_B) << 1) | digitalRead(ROT_A);
+  if (rotary_swap) enc_state = ((enc_state & 1) << 1) | (enc_state >> 1);
+  enc_accum = 0;
   PCMSK2 |= (1 << PCINT22) | (1 << PCINT23);
-  PCICR |= (1 << PCIE2);
-  if (!rotary_swap)
-    enc_state = (digitalRead(ROT_B) << 1) | digitalRead(ROT_A);
-  else
-    enc_state = (digitalRead(ROT_A) << 1) | digitalRead(ROT_B);
+  PCICR  |= (1 << PCIE2);
   interrupts();
 }
 
 class I2C {
 public:
 #define I2C_DELAY 4
-#define I2C_DDR DDRC // Pins for the I2C bit banging
+#define I2C_DDR DDRC
 #define I2C_PIN PINC
 #define I2C_PORT PORTC
 #define I2C_SDA (1 << 4) // PC4
 #define I2C_SCL (1 << 5) // PC5
-#define DELAY(n)                                                               \
-  for (uint8_t i = 0; i != n; i++)                                             \
-    asm("nop");
+#define DELAY(n) for (uint8_t i = 0; i != n; i++) asm("nop");
 #define I2C_SDA_GET() I2C_PIN &I2C_SDA
 #define I2C_SCL_GET() I2C_PIN &I2C_SCL
 #define I2C_SDA_HI() I2C_DDR &= ~I2C_SDA;
 #define I2C_SDA_LO() I2C_DDR |= I2C_SDA;
-#define I2C_SCL_HI()                                                           \
-  I2C_DDR &= ~I2C_SCL;                                                         \
-  DELAY(I2C_DELAY);
-#define I2C_SCL_LO()                                                           \
-  I2C_DDR |= I2C_SCL;                                                          \
-  DELAY(I2C_DELAY);
+#define I2C_SCL_HI() I2C_DDR &= ~I2C_SCL; DELAY(I2C_DELAY);
+#define I2C_SCL_LO() I2C_DDR |= I2C_SCL;  DELAY(I2C_DELAY);
 
   I2C() {
     I2C_PORT &= ~(I2C_SDA | I2C_SCL);
@@ -2704,7 +2704,7 @@ int8_t paramAction(uint8_t action, uint8_t id = ALL) {
     break;
   case FW_VER:
     if (action == UPDATE_MENU) {
-      printlabel(action, 0x44, F("FIRMWARE VER"));
+      printlabel(action, 0x44, F("PEBBLE 4.00E"));
       lcd.print(F(VERSION));
       lcd_blanks(1);
       lcd.print(F(RELDATE));  // release date
@@ -2770,15 +2770,17 @@ void initPins() {
   fastdigitalWrite(RX, HIGH);
   fastdigitalWrite(PWM_OUT, LOW);
   fastdigitalWrite(SIDETONE, LOW);
+  fastdigitalWrite(AUDIO1, LOW);
+  fastdigitalWrite(AUDIO2, LOW);
   // pins
   fastpinMode(SIDETONE, OUTPUT);
   fastpinMode(RX, OUTPUT);
   fastpinMode(PWM_OUT, OUTPUT);
+  fastpinMode(ROT_A, INPUT_PULLUP);
+  fastpinMode(ROT_B, INPUT_PULLUP);
   fastpinMode(BUTTONS, INPUT);
   fastpinMode(DIT, INPUT_PULLUP);
   fastpinMode(DAH, INPUT);
-  fastdigitalWrite(AUDIO1, LOW);
-  fastdigitalWrite(AUDIO2, LOW);
   fastpinMode(AUDIO1, INPUT);
   fastpinMode(AUDIO2, INPUT);
   fastpinMode(PD3, OUTPUT);
@@ -2855,8 +2857,8 @@ void setup() {
   PCMSK0 = 0;
   PCMSK1 = 0;
   PCMSK2 = 0;
-  initEncoder();
   initPins();
+  initEncoder();
   delay(100);
   lcd.begin(16, 4);
   for (i = 0; i != N_FONTS; i++) { // Init fonts
