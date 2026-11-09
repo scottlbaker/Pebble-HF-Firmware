@@ -35,7 +35,7 @@
 // ============================================================================
 
 #define VERSION "1.00a"            // firmware version
-#define RELDATE "11-08-26"         // firmware release date
+#define RELDATE "11-09-26"         // firmware release date
 #define EEPROM_VERSION  1          // track eeprom layout changes
 
 // pin definitions
@@ -143,9 +143,9 @@ enum params_t {
   QUAD_ACTIVE,   // 27
   ROTARY_SWAP,   // 28
   BAND,          // 29
-  PRESET,        // 30   // push BE to open sub-menu
-  CWMSGS,        // 31   // push BE to open sub-menu
-  USER_INFO,     // 32   // push BE to open sub-menu
+  PRESET,        // 30   // sub-menu
+  CWMSGS,        // 31   // sub-menu
+  USER_INFO,     // 32   // sub-menu
   FW_VER,        // 33
 
   // Invisible parameters that are always saved/loaded
@@ -332,7 +332,9 @@ void loadWPM(uint8_t wpm) {
 
 static uint8_t practice = false;
 static int8_t prev_mode;
+
 volatile uint8_t vox = 0;
+volatile uint8_t sending_cw_msg = false;
 
 #include <avr/sleep.h>
 #include <avr/wdt.h>
@@ -1154,14 +1156,14 @@ enum event_t {
   PT  = 0x0C   // push and turn
 };
 
-// Unified sub-menu picker (presets / CW messages / user info)
+// unified sub-menu picker (presets / CW messages / user info)
 enum picker_t {
-  PICKER_NONE = 0,
-  PICKER_PRESET,
-  PICKER_CWMSG,
-  PICKER_USERINFO
+  NOT_SUBMENU = 0,
+  SUBMENU_PRESET,
+  SUBMENU_CWMSG,
+  SUBMENU_USERINFO
 };
-uint8_t picker_type = PICKER_NONE;
+uint8_t submenu_type = NOT_SUBMENU;
 uint8_t picker_sel  = 0;   // current slot within the active picker
 
 // Menu / parameter action codes (needed by picker before paramAction is defined)
@@ -1243,8 +1245,9 @@ inline void cw_decode() {
 
 // display stepsize with cursor
 void stepsize_showcursor() {
-  if (picker_type != PICKER_NONE) {
-    lcd.noCursor(); return;
+  if (submenu_type != NOT_SUBMENU) {
+    lcd.noCursor();
+    return;
   }
   lcd.setCursor(stepsize+1, 1);
   lcd.cursor();
@@ -1253,12 +1256,8 @@ void stepsize_showcursor() {
 // change the stepsize
 void stepsize_change(int8_t val) {
   stepsize += val;
-  if (stepsize < STEP_1M)
-    stepsize = STEP_10;
-  if (stepsize > STEP_10)
-    stepsize = STEP_1M;
-  if (stepsize == STEP_10k || stepsize == STEP_500k)
-    stepsize += val;
+  if (stepsize < STEP_1M) stepsize = STEP_10;
+  if (stepsize > STEP_10) stepsize = STEP_1M;
   stepsize_showcursor();
 }
 
@@ -1577,21 +1576,21 @@ inline int16_t slow_dsp(int16_t i_ac2, int16_t q_ac2) {
     _absavg256 = absavg256;
     absavg256 = 0;
   }
-  else
-    absavg256 += abs(acm);
-
-  if (agc == 2) {
-    ac = process_agc(ac);
-    ac = ac >> (16 - volume);
-  } else if (agc == 1) {
-    ac = process_agc_fast(ac);
-    ac = ac >> (16 - volume);
-  } else {
-    // ac = ac >> (16-volume);
-    if (volume <= 13) // if no AGC allow volume control to boost weak signals
-      ac = ac >> (13 - volume);
-    else
-      ac = ac << (volume - 13);
+  else absavg256 += abs(acm);
+  // AGC
+  #define FAST_AGC 1
+  #define SLOW_AGC 2
+  switch (agc) {
+    case FAST_AGC: ac = process_agc_fast(ac); break;
+    case SLOW_AGC: ac = process_agc(ac); break;
+    default: break;
+  }
+  // volume control
+  switch (volume) {
+    case 16: ac = ac + (ac >> 1);
+    case 15: break;
+    case 14: ac = (ac >> 1) + (ac >> 2);
+    default: ac = ac >> (15-volume);
   }
   if (nr) ac = process_nr(ac);
   if (filt) ac = filt_var(ac);
@@ -1980,8 +1979,7 @@ int16_t smeter(int16_t ref = 0) {
   return dbm;
 }
 
-// --- UNIFIED PICKER + FREQ PRESETS ---
-
+// for sub-menus
 #define N_PRESET   8
 #define N_CWMSG    6
 #define N_USERINFO 2
@@ -2007,7 +2005,7 @@ void preset_print(uint32_t v) {
   lcd.print(r); lcd.print(' '); lcd.print(mode_label[v >> 24]);
 }
 
-static void picker_draw_preset() {
+static void submenu_preset() {
   lcd.noCursor();
   lcd.setCursor(0, 0);
   lcd.print(F("KNOB=go SEL=save"));
@@ -2026,7 +2024,7 @@ static void picker_draw_preset() {
   for (; len < 15; len++) lcd.print(' ');
 }
 
-static void picker_draw_cwmsg() {
+static void submenu_cwmsg() {
   lcd.noCursor();
   lcd.setCursor(0, 0);
   lcd_blanks(16);
@@ -2039,7 +2037,7 @@ static void picker_draw_cwmsg() {
   lcd_blanks(10);
 }
 
-static void picker_draw_userinfo() {
+static void submenu_userinfo() {
   lcd.noCursor();
   lcd.setCursor(0, 0);
   lcd.print(F("KNOB=sel  ENC=edit"));
@@ -2052,24 +2050,24 @@ static void picker_draw_userinfo() {
   lcd_blanks(10);
 }
 
-void picker_draw() {
-  switch (picker_type) {
-    case PICKER_PRESET:   picker_draw_preset();   break;
-    case PICKER_CWMSG:    picker_draw_cwmsg();    break;
-    case PICKER_USERINFO: picker_draw_userinfo(); break;
+void submenu_draw() {
+  switch (submenu_type) {
+    case SUBMENU_PRESET:   submenu_preset();   break;
+    case SUBMENU_CWMSG:    submenu_cwmsg();    break;
+    case SUBMENU_USERINFO: submenu_userinfo(); break;
     default: break;
   }
 }
 
-void picker_enter(uint8_t type) {
-  picker_type = type;
+void submenu_enter(uint8_t type) {
+  submenu_type = type;
   picker_sel = 0;
   menumode = NOT_IN_MENU;
-  picker_draw();
+  submenu_draw();
 }
 
-void picker_exit() {
-  picker_type = PICKER_NONE;
+void submenu_exit() {
+  submenu_type = NOT_SUBMENU;
   show_banner();
   change = true;
 }
@@ -2084,7 +2082,7 @@ static void preset_store() {
   wdt_reset();
   delay(800);
   wdt_reset();
-  picker_draw();
+  submenu_draw();
 }
 
 static void picker_apply_preset() {
@@ -2104,24 +2102,24 @@ static void picker_apply_preset() {
     filt = 0;
   }
   si5351.iqmsa = 0; // enforce PLL reset
-  picker_exit();
+  submenu_exit();
 }
 
-// Handle button events while a picker is open. Returns true if the event was consumed.
+// handle button events while a picker is open
+// returns true if the event was consumed
 bool picker_handle_event(uint8_t event) {
-  if (picker_type == PICKER_NONE) return false;
-
+  if (submenu_type == NOT_SUBMENU) return false;
   // Menu (left) single-click always cancels
   if (event == (BL | SC)) {
-    if (picker_type == PICKER_CWMSG) {
+    if (submenu_type == SUBMENU_CWMSG) {
       cw_msg_event = 0;   // cancel any scheduled repeating beacon
     }
-    picker_exit();
+    submenu_exit();
     return true;
   }
 
-  switch (picker_type) {
-  case PICKER_PRESET:
+  switch (submenu_type) {
+  case SUBMENU_PRESET:
     // Encoder = go (load), Select = save
     if (event == (BE | SC)) {
       picker_apply_preset();
@@ -2130,10 +2128,10 @@ bool picker_handle_event(uint8_t event) {
     }
     break;
 
-  case PICKER_CWMSG:
+  case SUBMENU_CWMSG:
     // Encoder = edit, Select = send
     if (event == (BE | SC)) {
-      picker_type = PICKER_NONE;
+      submenu_type = NOT_SUBMENU;
       menu = CWMSG1 + picker_sel;
       menumode = SELECT_VALUE;
       paramAction(UPDATE_MENU, menu);
@@ -2143,10 +2141,10 @@ bool picker_handle_event(uint8_t event) {
     }
     break;
 
-  case PICKER_USERINFO:
+  case SUBMENU_USERINFO:
     // Encoder = edit, Select = back
     if (event == (BE | SC)) {
-      picker_type = PICKER_NONE;
+      submenu_type = NOT_SUBMENU;
       menu = (picker_sel == 0) ? MY_NAME : MY_CALL;
       menumode = SELECT_VALUE;
       paramAction(UPDATE_MENU, menu);
@@ -2156,23 +2154,21 @@ bool picker_handle_event(uint8_t event) {
   default:
     break;
   }
-  return true; // any event while a picker is open is consumed
+  return true;
 }
 
 void picker_encoder(int8_t delta) {
-  if (picker_type == PICKER_NONE || delta == 0) return;
+  if (submenu_type == NOT_SUBMENU || delta == 0) return;
   uint8_t count = 0;
-  switch (picker_type) {
-    case PICKER_PRESET:   count = N_PRESET;   break;
-    case PICKER_CWMSG:    count = N_CWMSG;    break;
-    case PICKER_USERINFO: count = N_USERINFO; break;
+  switch (submenu_type) {
+    case SUBMENU_PRESET:   count = N_PRESET;   break;
+    case SUBMENU_CWMSG:    count = N_CWMSG;    break;
+    case SUBMENU_USERINFO: count = N_USERINFO; break;
     default: return;
   }
   picker_sel = (((int16_t)picker_sel + delta) % count + count) % count;
-  picker_draw();
+  submenu_draw();
 }
-
-// --- END UNIFIED PICKER ---
 
 // Start radio receiver
 void start_rx() {
@@ -2197,8 +2193,8 @@ uint32_t semi_qsk_timeout = 0;
 
 // display frequency
 inline void display_vfo(int32_t freq) {
-  if (picker_type != PICKER_NONE) {
-    picker_draw();
+  if (submenu_type != NOT_SUBMENU) {
+    submenu_draw();
     return;
   }
   lcd.setCursor(0,1);
@@ -2265,7 +2261,7 @@ void switch_rxtx(uint8_t tx_enable) {
   else
     _init = 1;
   rx_state = 0;
-  if ((cwdec) && (mode == CW)) {
+  if ((cwdec) && (mode == CW) && !sending_cw_msg) {
     filteredstate = tx_enable;
     dec2();
   }
@@ -2274,13 +2270,17 @@ void switch_rxtx(uint8_t tx_enable) {
     // TX
     if (practice) {
       fastdigitalWrite(RX, LOW); // TX (disable RX)
-      lcd.setCursor(15,1);
-      lcd.print('P');
+      if (!sending_cw_msg) {
+        lcd.setCursor(15,1);
+        lcd.print('P');
+      }
       si5351.SendRegister(SI_CLK_OE, TX0RX0);
     } else {
       fastdigitalWrite(RX, LOW); // TX (disable RX)
-      lcd.setCursor(15,1);
-      lcd.print('T');
+      if (!sending_cw_msg) {
+        lcd.setCursor(15,1);
+        lcd.print('T');
+      }
       if (mode == CW) {
         si5351.freq_calc_fast(-cw_offset);
         si5351.SendPLLRegisterBulk();
@@ -2325,29 +2325,39 @@ void switch_rxtx(uint8_t tx_enable) {
 
     si5351.freq_calc_fast(rit);
     si5351.SendPLLRegisterBulk(); // restore original PLL RX frequency
-    lcd.setCursor(15,1);
-    lcd.print((vox) ? 'V' : 'R');
+    if (!sending_cw_msg) {
+      lcd.setCursor(15,1);
+      lcd.print((vox) ? 'V' : 'R');
+    }
   }
   OCR2A = ((F_CPU / 64) / ((tx_enable) ? F_SAMP_TX : F_SAMP_RX)) - 1;
   TIMSK2 |= (1 << OCIE2A); // enable timer compare interrupt TIMER2_COMPA_vect
 }
 
+static char cw_scroll_buf[14] = "            ";
+
 // Transmit a CW character
-int cw_tx(char ch) {
+uint8_t cw_tx(char ch) {
   char sym;
   for (uint8_t j = 0; (sym = pgm_read_byte_near(m2c + j)); j++) {
     if (sym == ch) {
-      // transmit a CW character
       wdt_reset();
+      // shift characters left in the scroll buffer
+      for (uint8_t i = 0; i < 11; i++) {
+        cw_scroll_buf[i] = cw_scroll_buf[i + 1];
+      }
+      cw_scroll_buf[11] = ch;
+      cw_scroll_buf[12] = '\0';
       lcd.setCursor(3, 1);
-      lcd.print(ch);
+      lcd.print(cw_scroll_buf);
       uint8_t k = 0x80;
       for (; !(j & k); k >>= 1);
       k >>= 1; // shift start of cw code to MSB
-      if (k == 0) delay(ditTime * 4); // space -> add word space
-      else {
+      if (k == 0) {
+        delay(ditTime * 4); // space -> add word space
+      } else {
         for (; k; k >>= 1) {
-          switch_rxtx(1);    // key-on  tx
+          switch_rxtx(1);    // key-on tx
           if (delayWithKeySense(ditTime * ((j & k) ? 3 : 1))) {
             switch_rxtx(0);
             return 1;
@@ -2359,23 +2369,28 @@ int cw_tx(char ch) {
         if (delayWithKeySense(ditTime * 2))
           return 1;          // add letter space
       }
-      break; // next character
+      break;
     }
   }
   return 0;
 }
 
-// Transmit a CW message string
+// transmit a CW message string
 uint8_t cw_tx_str(char *msg) {
-  // clear the message area
+  sending_cw_msg = true;
+  // clear the scroll buffer
+  for (uint8_t i=0; i<12; i++) cw_scroll_buf[i] = ' ';
+  cw_scroll_buf[12] = '\0';
   lcd.setCursor(3, 1);
   lcd_blanks(12);
-  for (uint8_t i=0; msg[i]; i++)
+  for (uint8_t i = 0; msg[i]; i++) {
     if (cw_tx(msg[i])) break;
-  lcd.setCursor(3, 1);
-  lcd.print(msg);
-  lcd.setCursor(13, 1);
-  lcd_blanks(2);
+  }
+  sending_cw_msg = false;
+  delay(1000);
+  if (submenu_type == SUBMENU_CWMSG) {
+    submenu_draw();
+  }
   return 0;
 }
 
@@ -2574,21 +2589,31 @@ void paramAction(uint8_t action, char *value, uint8_t menuid,
     action = UPDATE_MENU;      // fall-through next case
   case UPDATE:
   case UPDATE_MENU:
-    if (menumode != MENU_NEXT)
-      pos = 0;
-    if (pos >= size)
-      pos = 0; // safety clamp
+    if (menumode != MENU_NEXT) pos = 0;
+    if (pos >= size) pos = 0;
+
     if (menumode == SELECT_VALUE)
       menumode = MENU_NEXT; // enter edit mode for strings
-    int16_t newval = (int16_t)value[pos] + encoder_val;
-    if (newval < _min)
-      value[pos] = _min;
-    else if (newval > _max)
-      value[pos] = _max;
-    else
-      value[pos] = (char)newval;
-    encoder_val = 0;
-    // For short strings (name/callsign), treat space as string terminator
+    // handle editing when current position is null-terminated
+    if (value[pos] == 0) {
+      if (encoder_val > 0) {
+        value[pos] = _min;  // start from space (' ')
+        encoder_val = 0;
+      } else if (encoder_val < 0) {
+        value[pos] = _max;  // wrap to 'Z'
+        encoder_val = 0;
+      }
+    } else {
+      int16_t newval = (int16_t)value[pos] + encoder_val;
+      if (newval < _min)
+        value[pos] = _min;
+      else if (newval > _max)
+        value[pos] = _max;
+      else
+        value[pos] = (char)newval;
+      encoder_val = 0;
+    }
+    // for short strings (name/callsign), treat space as string terminator
     if (size <= USERNAME_LENGTH && value[pos] == ' ') {
       value[pos] = 0;
       for (uint8_t i = pos + 1; i < size; i++)
@@ -2745,11 +2770,10 @@ int8_t paramAction(uint8_t action, uint8_t id) {
   case PRESET:
     if (action == UPDATE_MENU) {
       if (menumode >= SELECT_VALUE) {
-        picker_enter(PICKER_PRESET);
+        submenu_enter(SUBMENU_PRESET);
       } else {
         printlabel(action, 0x41, F("FREQ PRESETS"));
-        lcd.print(F("click ENC =>"));
-        lcd_blanks(10);
+        lcd_blanks(16);
       }
     } else {
       // advance EEPROM address; presets themselves live in a separate area
@@ -2781,11 +2805,10 @@ int8_t paramAction(uint8_t action, uint8_t id) {
   case CWMSGS:
     if (action == UPDATE_MENU) {
       if (menumode >= SELECT_VALUE) {
-        picker_enter(PICKER_CWMSG);
+        submenu_enter(SUBMENU_CWMSG);
       } else {
         printlabel(action, 0x42, F("CW MESSAGES"));
-        lcd.print(F("click ENC =>"));
-        lcd_blanks(10);
+        lcd_blanks(16);
       }
     } else {
       static uint8_t dummy_cw = 0;
@@ -2824,11 +2847,10 @@ int8_t paramAction(uint8_t action, uint8_t id) {
   case USER_INFO:
     if (action == UPDATE_MENU) {
       if (menumode >= SELECT_VALUE) {
-        picker_enter(PICKER_USERINFO);
+        submenu_enter(SUBMENU_USERINFO);
       } else {
         printlabel(action, 0x43, F("USER INFO"));
-        lcd.print(F("click ENC =>"));
-        lcd_blanks(10);
+        lcd_blanks(16);
       }
     } else {
       static uint8_t dummy_user = 0;
@@ -3180,7 +3202,7 @@ void loop() {
 
   if ((mode == CW) && cwdec && (!tx && !semi_qsk_timeout))
     cw_decode(); // CW decoder only active during RX
-  if ((menumode == NOT_IN_MENU) && (picker_type == PICKER_NONE)) {
+  if ((menumode == NOT_IN_MENU) && (submenu_type == NOT_SUBMENU)) {
     if (cw_event) {
       const char offv[] = {0, 7, 3, 5, 3, 7, 8};
       uint8_t offset = offv[smode];
@@ -3343,10 +3365,16 @@ void loop() {
       menumode = SELECT_MENU;
       break;
     case BL | SC:
-      if ((menumode == SELECT_MENU) && (menu >= CWMSG1 && menu <= CWMSG6)) {
-        cw_msg_event = millis();
-        cw_msg_id = menu - CWMSG1;
+      if ((menu == MY_NAME) || (menu == MY_CALL)) {
+        if (menumode >= SELECT_VALUE) paramAction(SAVE, menu);
         menumode = NOT_IN_MENU;
+        submenu_exit();
+        break;
+      }
+      if ((menu >= CWMSG1) && (menu <= CWMSG6)) {
+        if (menumode >= SELECT_VALUE) paramAction(SAVE, menu);
+        menumode = NOT_IN_MENU;
+        submenu_exit();
         break;
       }
       int8_t _menumode;
@@ -3356,8 +3384,7 @@ void loop() {
           menu = 1;
       }
       else if (menumode == SELECT_MENU) {
-        if (menu == FW_VER || menu == PRESET ||
-            menu == CWMSGS || menu == USER_INFO) {
+        if (menu == FW_VER) {
           _menumode = SELECT_MENU;
         } else {
           _menumode = SELECT_VALUE;
@@ -3419,23 +3446,15 @@ void loop() {
       change = true;
       break;
     case BE | SC:
-      if (menumode == NOT_IN_MENU) {
-        stepsize_change(+1);
-      } else {
-        int8_t _menumode;
-        if (menumode == SELECT_MENU) {
-          _menumode = SELECT_VALUE;
-        }
-        if (menumode == SELECT_VALUE) {
-          _menumode = SELECT_MENU;
-          change = true;
-          paramAction(SAVE, menu);
-        }
-        if (menumode == MENU_NEXT) {
+      switch (menumode) {
+        case NOT_IN_MENU: stepsize_change(+1);
+          break;
+        case MENU_NEXT:
           _menumode = MENU_NEXT;
           paramAction(NEXT_CH, menu);
-        }
-        menumode = _menumode;
+          menumode = _menumode;
+          break;
+        default: break;
       }
       break;
     case BE | PL:
@@ -3620,7 +3639,7 @@ void loop() {
     }
   }
   if (menumode == NOT_IN_MENU) {
-    if (picker_type != PICKER_NONE) {
+    if (submenu_type != NOT_SUBMENU) {
       if (encoder_val) {
         picker_encoder(encoder_val);
         encoder_val = 0;
@@ -3664,4 +3683,3 @@ void loop() {
   }
   wdt_reset();
 }
-
