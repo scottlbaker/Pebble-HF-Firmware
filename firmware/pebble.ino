@@ -34,7 +34,7 @@
 //
 // ============================================================================
 
-#define VERSION "1.00a"            // firmware version
+#define VERSION "1.00b"            // firmware version
 #define RELDATE "11-09-26"         // firmware release date
 #define EEPROM_VERSION  1          // track eeprom layout changes
 
@@ -64,6 +64,7 @@
 #define BUTTON_PRESSED  digitalRead(BUTTONS)
 #define DIT_PRESSED    !digitalRead(DIT)
 #define DAH_PRESSED    !digitalRead(DAH)
+#define KEY_PRESSED    (DIT_PRESSED || DAH_PRESSED)
 
 #define NO_SWAP   0
 #define SWAP      1
@@ -1124,8 +1125,8 @@ uint8_t delayWithKeySense(uint32_t ms) {
   uint32_t event = millis() + ms;
   for (; millis() < event;) {
     wdt_reset();
-    if (DIT_PRESSED || DAH_PRESSED) {
-      while (DIT_PRESSED || DAH_PRESSED) wdt_reset(); // wait
+    if (KEY_PRESSED) {
+      while (KEY_PRESSED) wdt_reset(); // wait
       return 1;
     }
   }
@@ -1227,13 +1228,7 @@ inline void cw_decode() {
   if (realstate != realstatebefore) {
     laststarttime = millis();
   }
-  // #define NB_SCALED_TO_WPM    1
-#ifdef NB_SCALED_TO_WPM
-  if ((millis() - laststarttime) >
-      min(1200 / (20 * 2), max(1200 / (40 * 2), hightimesavg / 6))) {
-#else
   if ((millis() - laststarttime) > nbtime) {
-#endif
     if (realstate != filteredstate) {
       filteredstate = realstate;
     }
@@ -2383,20 +2378,24 @@ uint8_t cw_tx_str(char *msg) {
   cw_scroll_buf[12] = '\0';
   lcd.setCursor(3, 1);
   lcd_blanks(12);
+  uint8_t interrupted = 0;
   for (uint8_t i = 0; msg[i]; i++) {
-    if (cw_tx(msg[i])) break;
+    if (cw_tx(msg[i])) {
+      interrupted = 1;
+      break;
+    }
   }
   sending_cw_msg = false;
   delay(1000);
   if (submenu_type == SUBMENU_CWMSG) {
     submenu_draw();
   }
-  return 0;
+  return interrupted;
 }
 
 // Transmit an expanded CW message string
 void cw_tx_msg(char *msg) {
-  char expanded[96];
+  char expanded[CW_MESSAGE_LENGTH];
   uint8_t out_idx = 0;
   for (uint8_t i = 0; msg[i] != '\0' && out_idx < sizeof(expanded) - 1; i++) {
     if (msg[i] == '$' && msg[i + 1] == 'C') {
@@ -2414,12 +2413,13 @@ void cw_tx_msg(char *msg) {
     }
   }
   expanded[out_idx] = '\0';
-  cw_tx_str(expanded);
+  // clear the repeating event timer
+  cw_msg_event = 0;
+  uint8_t interrupted = cw_tx_str(expanded);
   // clear the decoder output buffer
   for (uint8_t i = 0; i < 16; i++) out[i] = ' ';
-  // setup the next CW message event
-  cw_msg_event = 0;
-  if (cw_msg_interval && (cw_msg[cw_msg_id][0] == 'C') &&
+  // only reschedule if CQ message and not interrupted
+  if (!interrupted && cw_msg_interval && (cw_msg[cw_msg_id][0] == 'C') &&
      (cw_msg[cw_msg_id][1] == 'Q')) {
     cw_msg_event = millis() + (1000 * cw_msg_interval);
   }
@@ -3200,8 +3200,9 @@ void loop() {
     }
   }
 
-  if ((mode == CW) && cwdec && (!tx && !semi_qsk_timeout))
-    cw_decode(); // CW decoder only active during RX
+  if (((mode == CW) && cwdec && (!tx && !semi_qsk_timeout)) || 
+      ((submenu_type == SUBMENU_CWMSG) && cwdec && (!tx)))
+    cw_decode();
   if ((menumode == NOT_IN_MENU) && (submenu_type == NOT_SUBMENU)) {
     if (cw_event) {
       const char offv[] = {0, 7, 3, 5, 3, 7, 8};
