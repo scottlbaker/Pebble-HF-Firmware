@@ -34,9 +34,9 @@
 //
 // ============================================================================
 
-#define VERSION "1.00b"            // firmware version
-#define RELDATE "11-09-26"         // firmware release date
-#define EEPROM_VERSION  1          // track eeprom layout changes
+#define VERSION "1.00c"            // firmware version
+#define RELDATE "11-14-26"         // firmware release date
+#define EEPROM_VERSION  2          // track eeprom layout changes
 
 // pin definitions
 #define LCD_D4      0   // PD0     (pin 30)
@@ -109,59 +109,71 @@ const char *mode_label[3] = {"LSB", "USB", "CW "};
 #define USERNAME_ADDRESS 0x3E0   // 0x3E0 -> 0x3EF
 #define CALLSIGN_ADDRESS 0x3F0   // 0x3F0 -> 0x3FF
 
-#define N_PARAMS   33
+// Menu navigation boundaries
+#define MAIN_MENU_START     VOLUME
+#define MAIN_MENU_END       SETTINGS
+#define SETTINGS_MENU_START TONE_VOL
+#define SETTINGS_MENU_END   FW_VER
+
+#define N_PARAMS   FW_VER
 #define I_PARAMS    4
 #define ALL_PARAMS (N_PARAMS + I_PARAMS)
 
 enum params_t {
-  _NULL,
+  _NULL = 0,
+
+  // Main Menu (Operating)
   VOLUME,        // 1
-  TONE_VOL,      // 2
-  MODE,          // 3
-  FILTER,        // 4
-  VFOSEL,        // 5
-  RIT,           // 6
-  AGC,           // 7
-  NR,            // 8
-  ATT,           // 9
-  ATT2,          // 10
-  SMETER,        // 11
+  MODE,          // 2
+  FILTER,        // 3
+  RIT,           // 4
+  KEY_WPM,       // 5
+  KEY_MODE,      // 6
+  VOX,           // 7
+  PRESET,        // 8   -- submenu
+  CWMSGS,        // 9   -- submenu
+  SETTINGS,      // 10  -- submenu
+
+  // Submenu (Settings)
+  TONE_VOL,      // 11
   CWDEC,         // 12
   CWTONE,        // 13
   CWINTERVAL,    // 14
   SEMIQSK,       // 15
-  KEY_WPM,       // 16
-  KEY_MODE,      // 17
-  KEY_PIN,       // 18
-  KEY_TX,        // 19
-  VOX,           // 20
-  VOXGAIN,       // 21
-  DRIVE,         // 22
-  PWM_MIN,       // 23
-  PWM_MAX,       // 24
-  SIFXTAL,       // 25
-  IQ_ADJ,        // 26
-  QUAD_ACTIVE,   // 27
-  ROTARY_SWAP,   // 28
-  BAND,          // 29
-  PRESET,        // 30   // sub-menu
-  CWMSGS,        // 31   // sub-menu
-  USER_INFO,     // 32   // sub-menu
-  FW_VER,        // 33
+  KEY_SWAP,      // 16
+  VFOSEL,        // 17
+  SMETER,        // 18
+  AGC,           // 19
+  NR,            // 20
+  ATT,           // 21
+  ATT2,          // 22
+  NOISE_GATE,    // 23
+  TX_DRIVE,      // 24
+  PWM_MIN,       // 25
+  PWM_MAX,       // 26
+  VFO_XTAL,      // 27
+  IQ_ADJ,        // 28
+  QUAD_ACTIVE,   // 29
+  BAND,          // 30
+  ROTARY_SWAP,   // 31
+  MY_NAME,       // 32
+  MY_CALL,       // 33
+  PRACTICE,      // 34
+  FW_VER,        // 35
 
   // Invisible parameters that are always saved/loaded
-  FREQA,         // 34
-  FREQB,         // 35
-  MODEA,         // 36
-  MODEB,         // 37
+  FREQA,         // 36
+  FREQB,         // 37
+  MODEA,         // 38
+  MODEB,         // 39
 
   // Optional parameters for debug and calibration
-  CALIB,         // 38
-  SR,            // 39
-  CPULOAD,       // 40
-  PARAM_A,       // 41
-  PARAM_B,       // 42
-  PARAM_C,       // 43
+  CALIB,         // 40
+  SR,            // 41
+  CPULOAD,       // 42
+  PARAM_A,       // 43
+  PARAM_B,       // 44
+  PARAM_C,       // 45
 
   // eeprom addresses for the sub-menu vars
   PRESET1 = 100,
@@ -179,9 +191,6 @@ enum params_t {
   CWMSG4,
   CWMSG5,
   CWMSG6,
-
-  MY_NAME,
-  MY_CALL,
 
   ALL = 0xff
 };
@@ -363,7 +372,7 @@ void fastdigitalWrite(uint8_t pin, uint8_t val) {
 
 class LCD : public Print {
 public:
-#define _dn 0 // PD0 to PD3 connect to D4 to D7 on the display
+#define _dn 0 // PD0 to PD3 connect to D4 to D7
 #define _en 4 // PD4 - MUST have pull-up resistor
 #define _rs 4 // PC4 - MUST have pull-up resistor
 #define LCD_RS_HI() DDRC &= ~(1 << _rs); asm("nop");
@@ -379,18 +388,18 @@ public:
     delayMicroseconds(50000);
     LCD_RS_LO();
     LCD_EN_LO();
-    cmd(0x33);                // Ensures display is in 8-bit mode
+    cmd(0x33);                // set to 8-bit mode
     delayMicroseconds(4500);
     cmd(0x33);
     delayMicroseconds(4500);
     cmd(0x33);
-    delayMicroseconds(150);   // Ensures display is in 8-bit mode
-    cmd(0x32);                // Puts display in 4-bit mode
-    cmd(0x28);                // Function set: 2-line, 5x8
-    cmd(0x0c);                // Display on
-    cmd(0x01); // Clear display
-    delay(3);  // Allow to execute Clear on display
-    cmd(0x06); // Entrymode: left, shift-dec
+    delayMicroseconds(150);   // set to 8-bit mode
+    cmd(0x32);                // set to 4-bit mode
+    cmd(0x28);                // config: 2-line, 5x8
+    cmd(0x0c);                // display on
+    cmd(0x01);                // clear display
+    delay(3);                 // wait for clear to complete
+    cmd(0x06);                // entrymode: left, shift-dec
   }
   void nib(uint8_t b) {
     noInterrupts();
@@ -426,18 +435,11 @@ public:
   void noDisplay() { cmd(0x08); }
   void createChar(uint8_t l, uint8_t glyph[]) {
     cmd(0x40 | ((l & 0x7) << 3));
-    for (uint8_t i=0; i<8; i++)
-      write(glyph[i]);
+    for (uint8_t i=0; i<8; i++) write(glyph[i]);
   }
 };
 
-// This class spoofs display contents and cursor state
-template <class parent>
-class Display : public parent {
-  public:
-};
-
-Display<LCD> lcd;
+LCD lcd;
 
 volatile int8_t  encoder_val = 0;
 volatile uint8_t enc_state = 0;
@@ -900,18 +902,12 @@ inline int16_t ssb(int16_t in) {
   int16_t ac = in * 2; //   6dB gain (justified since lpf/hpf is losing -3dB)
   ac = ac + z1;        // lpf
   z1 = (in - (8) * z1) / (8 + 1); // lpf
-  //z1 = (in - (2) * z1) / (2 + 1);
-  //z1 = (in - (4) * z1) / (4 + 1);
-  //z1 = (in - 12 * z1) / 13;
   // Smoothing clipping limiter
   if (ac > 250) {
     ac = 250 + (ac - 250) / 2;
   } else if (ac < -250) {
     ac = -250 - (-250 - ac) / 2;
   }
-  //dc = (ac + (2) * dc) / (2 + 1);
-  //dc = (ac + (1) * dc) / (1 + 1);
-  //dc = (ac + dc) / 2;
   dc = (ac + (2) * dc) / (2 + 1);
   v[15] = (ac - dc);
 #else
@@ -923,8 +919,6 @@ inline int16_t ssb(int16_t in) {
 
   // Gentle treble emphasis: half the previous boost
   ac += (in - z1) / 2;
-  //ac += (in - z1) / 4;
-  //ac += (in - z1) / 8;
 
   // Smoothing clipping limiter
   if (ac > 250) {
@@ -1034,7 +1028,6 @@ void dsp_tx() {
   } // enable carrier
 }
 
-volatile uint16_t acc;
 volatile uint32_t cw_offset;
 volatile uint8_t tone_vol = 12;
 volatile uint8_t cw_tone = 0;
@@ -1042,7 +1035,7 @@ const uint32_t tones[] = {(F_MCU*600ULL)/20000000, (F_MCU*700ULL)/20000000};
 volatile int8_t p_sin = 0;       // initialized with A*sin(0) = 0
 volatile int8_t n_cos = 448 / 4; // initialized with A*cos(t) = A
 
-// Minsky circle sample [source:
+// Minsky circle sample
 inline void process_minsky() {
   // alpha = f_tone * 2 * pi / fs
   int8_t alpha127 = tones[cw_tone] * 798 / F_SAMP_TX;
@@ -1099,7 +1092,7 @@ uint8_t delayWithKeySense(uint32_t ms) {
   return 0;
 }
 
-uint8_t cw_msg_interval = 0; // CW message repeat interval
+uint8_t cw_msg_interval = 5; // CW message repeat interval
 uint32_t cw_msg_event = 0;
 uint8_t cw_msg_id = 0;       // selected message
 
@@ -1110,6 +1103,7 @@ uint8_t cw_msg_id = 0;       // selected message
 #define MENU_NEXT      3
 
 volatile uint8_t menumode = NOT_IN_MENU;
+bool in_settings = false;
 
 // button event codes
 enum event_t {
@@ -1123,12 +1117,11 @@ enum event_t {
   PT  = 0x0C   // push and turn
 };
 
-// unified sub-menu picker (presets / CW messages / user info)
+// unified sub-menu picker (presets / CW messages)
 enum picker_t {
   NOT_SUBMENU = 0,
   SUBMENU_PRESET,
-  SUBMENU_CWMSG,
-  SUBMENU_USERINFO
+  SUBMENU_CWMSG
 };
 uint8_t submenu_type = NOT_SUBMENU;
 uint8_t picker_sel  = 0;   // current slot within the submenu
@@ -1153,8 +1146,7 @@ volatile uint8_t cw_event = false;
 
 // print spaces
 void lcd_blanks(uint8_t x) {
-  for (uint8_t i=0; i<x; i++)
-    lcd.print(' ');
+  while (x--) lcd.print(' ');
 }
 
 // print a decoded symbol
@@ -1346,8 +1338,6 @@ inline int16_t process_agc(int16_t in) {
 inline int16_t process_nr(int16_t in) {
   static int16_t ea1;
   ea1 = EA(ea1, in, 1 << (nr - 1));
-  // static int16_t ea2;
-  // ea2 = EA(ea2, ea1, inv_gain);
   return ea1;
 }
 
@@ -1484,12 +1474,11 @@ inline int16_t slow_dsp(int16_t i_ac2, int16_t q_ac2) {
   vi[5] = vi[6];
   vi[6] = i_ac2; // Delay to match Hilbert transform on Q branch
 
-  // USB, LSB, CW
   // inverting I and Q helps dampening a
   // feedback-loop between PWM out and ADC inputs
   acm = -id - qh;
   ac = acm;
-  // Set S-Meter level
+  // set S-Meter level
   static uint8_t absavg256cnt;
   if (!(absavg256cnt--)) {
     _absavg256 = absavg256;
@@ -1546,17 +1535,6 @@ volatile uint8_t rx_state = 0;
 #pragma GCC push_options
 #pragma GCC optimize("Ofast") // compiler-optimization for speed
 
-// Non-recursive CIC Filter (M=2, R=4) implementation, so two-stages of
-// (followed by down-sampling with factor 2): H1(z) = (1 + z^-1)^2 = 1 + 2*z^-1
-// + z^-2 = (1 + z^-2) + (2) * z^-1 = FA(z) + FB(z) * z^-1; with down-sampling
-// before stage translates into poly-phase components: FA(z) = 1 + z^-1, FB(z) =
-// 2 Non-recursive CIC Filter (M=4) implementation (for second-stage only):
-// H1(z) = (1 + z^-1)^4 = 1 + 4*z^-1 + 6*z^-2 + 4*z^-3 + z^-4 = 1 + 6*z^-2 +
-// z^-4 + (4 + 4*z^-2) * z^-1 = FA(z) + FB(z) * z^-1; with down-sampling before
-// stage translates into poly-phase components: FA(z) = 1 + 6*z^-1 + z^-2, FB(z)
-// = 4 + 4*z^-1 M=3 FA(z) = 1 + 3*z^-1, FB(z) = 3 + z^-1 source: Lyons
-// Understanding Digital Signal Processing 3rd edition 13.24.1
-
 static uint8_t tc = 0;
 
 void process(int16_t i_ac2, int16_t q_ac2) {
@@ -1579,9 +1557,6 @@ void process(int16_t i_ac2, int16_t q_ac2) {
   if (tc++ == 0) // prevent recursion : If tc == 0 enable interrupts
 #endif
 
-  // hack, since slow_dsp process exceeds rx sample-time, allow
-  // subsequent 7 interrupts for further rx sampling while processing
-  // prevent nested interrupts with tc
   interrupts();
 
 #ifdef AF_OUT
@@ -1712,56 +1687,38 @@ void adc_start(uint8_t adcpin, bool ref1v1, uint32_t fs) {
   ADCSRB = 0;               // clear ADCSRB register
   ADMUX = 0;                // clear ADMUX register
   ADMUX |= (adcpin & 0x0f); // set analog input pin
-  ADMUX |= ((ref1v1) ? (1 << REFS1) : 0) |
-           (1 << REFS0); // If reflvl == true, set AREF=1.1V (Internal ref);
-                         // otherwise AREF=AVCC=(5V)
-  ADCSRA |=
-      ((uint8_t)log2((uint8_t)(F_CPU / 13 / fs))) &
-      0x07; // ADC Prescaler (for normal conversions non-auto-triggered): ADPS =
-            // log2(F_CPU / 13 / Fs) - 1; ADSP=0..7 resulting in resp.
-            // conversion rate of 1536, 768, 384, 192, 96, 48, 24, 12 kHz
-  // ADCSRA |= (1 << ADIE);  // enable interrupts when measurement complete
+  ADMUX |= ((ref1v1) ? (1 << REFS1) : 0) | (1 << REFS0);
+  ADCSRA |= ((uint8_t)log2((uint8_t)(F_CPU / 13 / fs))) & 0x07;
   ADCSRA |= (1 << ADEN); // enable ADC
-                         // ADCSRA |= (1 << ADSC);  // start ADC measurements
 #ifdef ADC_NR
-  //  set_sleep_mode(SLEEP_MODE_ADC);  // ADC NR sleep destroys the timer2
-  //  integrity, therefore Idle sleep is better alternative (keeping clkIO as an
-  //  active clock domain)
   set_sleep_mode(SLEEP_MODE_IDLE);
   sleep_enable();
 #endif
 }
 
 void adc_stop() {
-  // ADCSRA &= ~(1 << ADATE); // disable auto trigger
-  ADCSRA &= ~(1 << ADIE); // disable interrupts when measurement complete
-  ADCSRA |=
-      (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0); // 128 prescaler for 9.6kHz
+  ADCSRA &= ~(1 << ADIE);
+  ADCSRA |= (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
 #ifdef ADC_NR
   sleep_disable();
 #endif
   ADMUX = (1 << REFS0); // restore reference voltage AREF (5V)
 }
 
-void timer1_start(uint32_t fs) { // Timer 1: OC1A and OC1B in PWM mode
+// Timer 1: OC1A and OC1B in PWM mode
+void timer1_start(uint32_t fs) {
   TCCR1A = 0;
   TCCR1B = 0;
   TCCR1A |= (1 << COM1A1) | (1 << COM1B1) |
-            (1 << WGM11); // Clear OC1A/OC1B on compare match, set OC1A/OC1B at
-                          // BOTTOM (non-inverting mode)
+            (1 << WGM11);
   TCCR1B |= (1 << CS10) | (1 << WGM13) |
-            (1 << WGM12); // Mode 14 - Fast PWM;  CS10: clkI/O/1 (No prescaling)
+            (1 << WGM12);
   ICR1H = 0x00;
-  ICR1L = min(255, F_CPU / fs); // PWM value range (fs>78431):  Fpwm = F_CPU /
-                                // [Prescaler * (1 + TOP)]
-  // TCCR1A |= (1 << COM1A1) | (1 << COM1B1) | (1 << WGM10); // Clear OC1A/OC1B
-  // on compare match, set OC1A/OC1B at BOTTOM (non-inverting mode) TCCR1B |= (1
-  // << CS10) | (1 << WGM12); // Mode 5 - Fast PWM, 8-bit;  CS10: clkI/O/1 (No
-  // prescaling)
+  ICR1L = min(255, F_CPU / fs);
   OCR1AH = 0x00;
-  OCR1AL = 0x00; // OC1A (SIDETONE) PWM duty-cycle (span defined by ICR).
+  OCR1AL = 0x00; // OC1A (SIDETONE)
   OCR1BH = 0x00;
-  OCR1BL = 0x00; // OC1B (PWM_OUT) PWM duty-cycle (span defined by ICR).
+  OCR1BL = 0x00; // OC1B (PWM_OUT)
 }
 
 void timer1_stop() {
@@ -1769,22 +1726,21 @@ void timer1_stop() {
   OCR1BL = 0x00;
 }
 
-void timer2_start(uint32_t fs) { // Timer 2: interrupt mode
-  ASSR &= ~(1 << AS2); // Timer 2 clocked from CLK I/O (like Timer 0 and 1)
+// start timer 2
+void timer2_start(uint32_t fs) {
+  ASSR &= ~(1 << AS2);
   TCCR2A = 0;
   TCCR2B = 0;
   TCNT2 = 0;
-  TCCR2A |= (1 << WGM21);  // WGM21: Mode 2 - CTC (Clear Timer on Compare Match)
-  TCCR2B |= (1 << CS22);   // Set C22 bits for 64 prescaler
-  TIMSK2 |= (1 << OCIE2A); // enable timer compare interrupt TIMER2_COMPA_vect
-  uint8_t ocr =
-      ((F_CPU / 64) / fs) - 1; // OCRn = (F_CPU / pre-scaler / fs) - 1;
-  OCR2A = ocr;
+  TCCR2A |= (1 << WGM21);  // WGM21: Mode 2
+  TCCR2B |= (1 << CS22);   // 64 prescaler
+  TIMSK2 |= (1 << OCIE2A); // enable timer compare
+  OCR2A   = ((F_CPU / 64) / fs) - 1;
 }
 
 void timer2_stop() {        // Stop Timer 2 interrupt
   TIMSK2 &= ~(1 << OCIE2A); // disable timer compare interrupt
-  delay(1); // wait until potential in-flight interrupts are finished
+  delay(1);                 // wait for any interrupts
 }
 
 #define N_FONTS 8
@@ -1810,7 +1766,7 @@ const byte fonts[N_FONTS][8] PROGMEM = {
 // sample-rate and analog reference setting; restores previous settings
 int analogSafeRead(uint8_t pin, bool ref1v1 = false) {
   noInterrupts();
-  // wait until ADC conversion is completed
+  // wait until ADC conversion is complete
   for (; !(ADCSRA & (1 << ADIF)););
   uint8_t adcsra = ADCSRA;
   uint8_t admux = ADMUX;
@@ -1834,11 +1790,11 @@ uint16_t analogSampleMic() {
   if (vox_thresh >= 32)
     fastdigitalWrite(RX, LOW); // disable RF input
   uint8_t oldmux = ADMUX;
-  // wait until ADC conversion is completed
+  // wait until ADC conversion is complete
   for (; !(ADCSRA & (1 << ADIF)););
   ADMUX = admux[2];      // set MUX for next conversion
   ADCSRA |= (1 << ADSC); // start next ADC conversion
-  // wait until ADC conversion is completed
+  // wait until ADC conversion is complete
   for (; !(ADCSRA & (1 << ADIF)););
   ADMUX = oldmux;
   if (vox_thresh >= 32)
@@ -1878,7 +1834,6 @@ int16_t smeter(int16_t ref = 0) {
       lcd.print(F("dBm "));
     }
     if (smode == 2) { // S-meter
-      // dBm to S (modified to work correctly above S9)
       uint8_t s = (dbm < -63) ? ((dbm - -127) / 6) : (((uint8_t)(dbm - -73)) / 10) * 10;
       lcd.setCursor(14,0);
       if (s < 10) {
@@ -1887,7 +1842,6 @@ int16_t smeter(int16_t ref = 0) {
       lcd.print(s);
     }
     if (smode == 3) { // S-bar
-      // dBm to S (modified to work correctly above S9)
       int8_t s = (dbm < -63) ? ((dbm - -127) / 6) : (((uint8_t)(dbm - -73)) / 10) * 10;
       char tmp[5];
       for (uint8_t i = 0; i != 4; i++) {
@@ -1912,7 +1866,6 @@ int16_t smeter(int16_t ref = 0) {
 // for sub-menus
 #define N_PRESET   8
 #define N_CWMSG    6
-#define N_USERINFO 2
 
 uint32_t preset_get(uint8_t i) {  // 0 = empty slot
   uint32_t eeval = eeprom_read_dword((const uint32_t *)(PRESET_EEPROM + 4 * i));
@@ -1969,24 +1922,10 @@ static void submenu_cwmsg() {
   lcd_blanks(10);
 }
 
-static void submenu_userinfo() {
-  lcd.noCursor();
-  lcd.setCursor(0, 0);
-  lcd.print(F("KNOB=sel  ENC=edit"));
-  lcd.setCursor(0, 1);
-  lcd.print(picker_sel + 1);
-  lcd.print(F(": "));
-  char *p = (picker_sel == 0) ? my_name : my_call;
-  for (uint8_t i = 0; i < 12 && p[i]; i++)
-    lcd.print(p[i]);
-  lcd_blanks(10);
-}
-
 void submenu_draw() {
   switch (submenu_type) {
     case SUBMENU_PRESET:   submenu_preset();   break;
     case SUBMENU_CWMSG:    submenu_cwmsg();    break;
-    case SUBMENU_USERINFO: submenu_userinfo(); break;
     default: break;
   }
 }
@@ -2004,7 +1943,7 @@ void submenu_exit() {
   change = true;
 }
 
-// return from CW-message or user-info string edit
+// return from CW-message string edit
 // if save==true writes EEPROM; if save==false the edit is discarded
 static void return_to_picker(bool save) {
   if (menu >= CWMSG1 && menu <= CWMSG6) {
@@ -2017,23 +1956,9 @@ static void return_to_picker(bool save) {
       (void *)(CWMSG_EEPROM + idx * CW_MESSAGE_LENGTH), CW_MESSAGE_LENGTH);
     }
     picker_sel = idx;
-    menu = CWMSGS;                 // so a later Menu press opens 4.2, not the message
+    menu = CWMSGS;                 // so a later Menu press opens 1.9, not the message
     menumode = NOT_IN_MENU;
     submenu_type = SUBMENU_CWMSG;
-    submenu_draw();
-  } else if (menu == MY_NAME || menu == MY_CALL) {
-    if (save) {
-      paramAction(SAVE, menu);
-    } else {
-      if (menu == MY_NAME)
-        eeprom_read_block(my_name, (void *)USERNAME_ADDRESS, USERNAME_LENGTH);
-      else
-        eeprom_read_block(my_call, (void *)CALLSIGN_ADDRESS, CALLSIGN_LENGTH);
-    }
-    picker_sel = (menu == MY_NAME) ? 0 : 1;
-    menu = USER_INFO;
-    menumode = NOT_IN_MENU;
-    submenu_type = SUBMENU_USERINFO;
     submenu_draw();
   }
 }
@@ -2107,19 +2032,6 @@ bool picker_handle_event(uint8_t event) {
     }
     break;
 
-  case SUBMENU_USERINFO:
-    // click encoder to edit
-    if (event == (BE | SC)) {
-      submenu_type = NOT_SUBMENU;
-      menu = (picker_sel == 0) ? MY_NAME : MY_CALL;
-      menumode = SELECT_VALUE;
-      paramAction(UPDATE_MENU, menu);
-    } else if (event == (BR | SC)) {
-      menu = USER_INFO;   // leave menu at submenu entry
-      submenu_exit();
-    }
-    break;
-
   default:
     break;
   }
@@ -2132,7 +2044,6 @@ void picker_encoder(int8_t delta) {
   switch (submenu_type) {
     case SUBMENU_PRESET:   count = N_PRESET;   break;
     case SUBMENU_CWMSG:    count = N_CWMSG;    break;
-    case SUBMENU_USERINFO: count = N_USERINFO; break;
     default: return;
   }
   picker_sel = (((int16_t)picker_sel + delta) % count + count) % count;
@@ -2157,7 +2068,6 @@ void start_rx() {
 }
 
 int16_t _centiGain = 0;
-uint8_t txdelay = 0;
 uint32_t semi_qsk_timeout = 0;
 
 // display frequency
@@ -2195,7 +2105,6 @@ inline void display_vfo(int32_t freq) {
 // Set RX or TX mode, with RIT support and CW offset
 void switch_rxtx(uint8_t tx_enable) {
   TIMSK2 &= ~(1 << OCIE2A); // disable timer compare interrupt
-  // delay(1);
   delayMicroseconds(20); // wait until potential RX interrupt is finalized
   noInterrupts();
   tx = tx_enable;
@@ -2403,7 +2312,6 @@ void process_encoder_tuning_step(int8_t steps) {
   int32_t stepval = stepsizes[stepsize];
   if (rit) {
     rit += steps * stepval;
-    // rit = max(-9999, min(9999, rit));
     rit = max(-99999, min(99999, rit));
   } else {
     freq += steps * stepval;
@@ -2591,14 +2499,11 @@ int8_t paramAction(uint8_t action, uint8_t id) {
         paramAction(action, _id);
       }
       // include frequency presets
-      for (uint8_t i = 0; i < 6; i++)
+      for (uint8_t i = 0; i < 8; i++)
         paramAction(action, (uint8_t)(PRESET1 + i));
       // include CW messages
       for (uint8_t i = 0; i < 6; i++)
         paramAction(action, (uint8_t)(CWMSG1 + i));
-      // include user info
-      paramAction(action, MY_NAME);
-      paramAction(action, MY_CALL);
       return ALL;
     } else {
       eeprom_addr = EEPROM_OFFSET;
@@ -2610,136 +2515,49 @@ int8_t paramAction(uint8_t action, uint8_t id) {
 
   // visible parameters
   switch (id) {
+  // =========================================================================
+  // MAIN (OPERATING) MENU (1.1 - 1.10)
+  // =========================================================================
   case VOLUME:
     paramAction(action, volume, 0x11, F("VOLUME"), NULL, 1, 16, false);
     break;
-  case TONE_VOL:
-    paramAction(action, tone_vol, 0x12, F("TONE VOLUME"), NULL, 1, 16, false);
-    break;
   case MODE:
-    paramAction(action, mode, 0x13, F("MODE"), mode_label, 0, _N(mode_label) - 1, false);
+    paramAction(action, mode, 0x12, F("MODE"), mode_label, 0, _N(mode_label) - 1, false);
     break;
   case FILTER:
-    paramAction(action, filt, 0x14, F("FILTER BW"), filt_label, 0, _N(filt_label) - 1, false);
-    break;
-  case VFOSEL:
-    paramAction(action, vfosel, 0x15, F("VFO A/B"), vfosel_label, 0, 1, false);
+    paramAction(action, filt, 0x13, F("FILTER BW"), filt_label, 0, _N(filt_label) - 1, false);
     break;
   case RIT:
-    paramAction(action, rit, 0x16, F("RIT"), offon_label, 0, 1, false);
-    break;
-  case AGC:
-    paramAction(action, agc, 0x17, F("AGC"), agc_label, 0, _N(agc_label) - 1, false);
-    break;
-  case NR:
-    paramAction(action, nr, 0x18, F("NR"), NULL, 0, 8, false);
-    break;
-  case ATT:
-    paramAction(action, att, 0x19, F("ATT"), att_label, 0, 7, false);
-    break;
-  case ATT2:
-    paramAction(action, att2, 0x1A, F("ATT2"), NULL, 0, 16, false);
-    break;
-  case SMETER:
-    paramAction(action, smode, 0x1B, F("S-METER"), smode_label, 0, _N(smode_label) - 1, false);
-    break;
-  case CWDEC:
-    paramAction(action, cwdec, 0x21, F("CW DECODER"), offon_label, 0, 1, false);
-    break;
-  case CWTONE:
-    paramAction(action, cw_tone, 0x22, F("CW TONE"), cw_tone_label, 0, 1, false);
-    break;
-  case CWINTERVAL:
-    paramAction(action, cw_msg_interval, 0x23, F("CQ INTERVAL"), NULL, 0, 60, false);
-    break;
-  case SEMIQSK:
-    paramAction(action, semi_qsk, 0x24, F("SEMI QSK"), offon_label, 0, 1, false);
+    paramAction(action, rit, 0x14, F("RIT"), offon_label, 0, 1, false);
     break;
   case KEY_WPM:
-    paramAction(action, keyer_speed, 0x25, F("KEYER SPEED"), NULL, 1, 60, false);
+    paramAction(action, keyer_speed, 0x15, F("KEYER SPEED"), NULL, 1, 60, false);
     break;
   case KEY_MODE:
-    paramAction(action, keyer_mode, 0x26, F("KEYER MODE"), keyer_mode_label, 0, 3, false);
-    break;
-  case KEY_PIN:
-    paramAction(action, keyer_swap, 0x27, F("KEYER SWAP"), offon_label, 0, 1, false);
-    break;
-  case KEY_TX:
-    paramAction(action, practice, 0x28, F("PRACTICE"), offon_label, 0, 1, false);
+    paramAction(action, keyer_mode, 0x16, F("KEYER MODE"), keyer_mode_label, 0, 3, false);
     break;
   case VOX:
-    paramAction(action, vox, 0x31, F("VOX"), offon_label, 0, 1, false);
+    paramAction(action, vox, 0x17, F("VOX"), offon_label, 0, 1, false);
     break;
-  case VOXGAIN:
-    paramAction(action, vox_thresh, 0x32, F("NOISE GATE"), NULL, 0, 255, false);
-    break;
-  case DRIVE:
-    paramAction(action, drive, 0x33, F("TX DRIVE"), NULL, 0, 8, false);
-    break;
-  case PWM_MIN:
-    paramAction(action, pwm_min, 0x34, F("PA BIAS MIN"), NULL, 0, pwm_max - 1, false);
-    break;
-  case PWM_MAX:
-    paramAction(action, pwm_max, 0x35, F("PA BIAS MAX"), NULL, pwm_min, 255, false);
-    break;
-  case SIFXTAL:
-    paramAction(action, si5351.fxtal, 0x36, F("REF FRQ"), NULL, 14000000, 28000000, false);
-    break;
-  case IQ_ADJ:
-    paramAction(action, rx_ph_q, 0x37, F("IQ PHASE"), NULL, 0, 180, false);
-    break;
-  case QUAD_ACTIVE:
-    paramAction(action, quad_enabled, 0x38, F("QUAD"), offon_label, 0, 1, false);
-    break;
-  case ROTARY_SWAP:
-    paramAction(action, rotxxx_swap, 0x39, F("ROTARY SWAP"), offon_label, 0, 1, false);
-    break;
-  case BAND:
-    paramAction(action, bandsel, 0x3A, F("PEBBLE BAND"), band_label, 0, 1, false);
-    break;
-
-  // entry to open the frequency preset sub-menu
   case PRESET:
     if (action == UPDATE_MENU) {
       if (menumode >= SELECT_VALUE) {
         submenu_enter(SUBMENU_PRESET);
       } else {
-        printlabel(action, 0x41, F("FREQ PRESETS"));
+        printlabel(action, 0x18, F("FREQ PRESETS"));
         lcd_blanks(16);
       }
     } else {
-      // advance EEPROM address; presets themselves live in a separate area
       static uint8_t dummy_preset = 0;
       actionCommon(action, &dummy_preset, sizeof(dummy_preset));
     }
     break;
-  // the eight presets (fixed EEPROM addresses)
-  case PRESET1: case PRESET2: case PRESET3: case PRESET4:
-  case PRESET5: case PRESET6: case PRESET7: case PRESET8: {
-    uint8_t idx = id - PRESET1;
-    uint16_t addr = PRESET_EEPROM + 4 * idx;
-    if (action == LOAD) {
-      // If the stored EEPROM value is invalid, preset_get() will fall back to defaults,
-      // but this ensures explicit loading happens during an ALL load.
-      uint32_t v = preset_get(idx);
-      eeprom_write_dword((uint32_t *)addr, v); // ensure valid fallback is written if blank
-    } else if (action == SAVE) {
-      // Presets are normally saved via preset_store(), but this covers bulk SAVE operations.
-      // We can grab the current preset value via preset_get(idx) and persist it.
-      uint32_t v = preset_get(idx);
-      eeprom_write_dword((uint32_t *)addr, v);
-    } else if (action == SKIP) {
-      // not part of sequential layout
-    }
-    break;
-  }
-  // entry to open the CW-message sub-menu
   case CWMSGS:
     if (action == UPDATE_MENU) {
       if (menumode >= SELECT_VALUE) {
         submenu_enter(SUBMENU_CWMSG);
       } else {
-        printlabel(action, 0x42, F("CW MESSAGES"));
+        printlabel(action, 0x19, F("CW MESSAGES"));
         lcd_blanks(16);
       }
     } else {
@@ -2747,47 +2565,88 @@ int8_t paramAction(uint8_t action, uint8_t id) {
       actionCommon(action, &dummy_cw, sizeof(dummy_cw));
     }
     break;
-  // the six messages (fixed EEPROM addresses)
-  case CWMSG1: case CWMSG2: case CWMSG3:
-  case CWMSG4: case CWMSG5: case CWMSG6: {
-    uint8_t idx = id - CWMSG1;
-    uint16_t addr = CWMSG_EEPROM + idx * CW_MESSAGE_LENGTH;
-    if (action == LOAD) {
-      eeprom_read_block(cw_msg[idx], (void *)addr, CW_MESSAGE_LENGTH);
-    } else if (action == SAVE) {
-      for (uint8_t i = CW_MESSAGE_LENGTH; i > 0; i--) {
-        if (cw_msg[idx][i-1] == ' ' || cw_msg[idx][i-1] == 0)
-          cw_msg[idx][i-1] = 0;
-        else break;
-      }
-      eeprom_write_block(cw_msg[idx], (void *)addr, CW_MESSAGE_LENGTH);
-    } else if (action == SKIP) {
-      // not part of sequential layout
-    } else {
-      const __FlashStringHelper *lbl =
-          (idx==0) ? F("CQ MSG 1") :
-          (idx==1) ? F("CW MSG 2") :
-          (idx==2) ? F("CW MSG 3") :
-          (idx==3) ? F("CW MSG 4") :
-          (idx==4) ? F("CW MSG 5") : F("CW MSG 6");
-      paramAction(action, cw_msg[idx], 0x42 + idx, lbl, CW_MESSAGE_LENGTH);
-    }
-    break;
-  }
-
-  // entry to open the user name and callsign sub-menu
-  case USER_INFO:
+  case SETTINGS:
     if (action == UPDATE_MENU) {
       if (menumode >= SELECT_VALUE) {
-        submenu_enter(SUBMENU_USERINFO);
+        in_settings = true;
+        menu = SETTINGS_MENU_START;
+        menumode = SELECT_MENU;
+        paramAction(UPDATE_MENU, menu);
       } else {
-        printlabel(action, 0x43, F("USER INFO"));
+        printlabel(action, 0x1A, F("SETTINGS"));
         lcd_blanks(16);
       }
     } else {
-      static uint8_t dummy_user = 0;
-      actionCommon(action, &dummy_user, sizeof(dummy_user));
+      static uint8_t dummy_settings = 0;
+      actionCommon(action, &dummy_settings, sizeof(dummy_settings));
     }
+    break;
+
+  // =========================================================================
+  // SETTINGS SUBMENU (2.1 - 5.6)
+  // =========================================================================
+  case TONE_VOL:
+    paramAction(action, tone_vol, 0x21, F("TONE VOLUME"), NULL, 1, 16, false);
+    break;
+  case CWDEC:
+    paramAction(action, cwdec, 0x22, F("CW DECODER"), offon_label, 0, 1, false);
+    break;
+  case CWTONE:
+    paramAction(action, cw_tone, 0x23, F("CW TONE"), cw_tone_label, 0, 1, false);
+    break;
+  case CWINTERVAL:
+    paramAction(action, cw_msg_interval, 0x24, F("CW INTERVAL"), NULL, 0, 60, false);
+    break;
+  case SEMIQSK:
+    paramAction(action, semi_qsk, 0x25, F("SEMI QSK"), offon_label, 0, 1, false);
+    break;
+  case KEY_SWAP:
+    paramAction(action, keyer_swap, 0x26, F("KEYER SWAP"), offon_label, 0, 1, false);
+    break;
+  case VFOSEL:
+    paramAction(action, vfosel, 0x31, F("VFO SELECT"), vfosel_label, 0, 1, false);
+    break;
+  case SMETER:
+    paramAction(action, smode, 0x32, F("S-METER"), smode_label, 0, _N(smode_label) - 1, false);
+    break;
+  case AGC:
+    paramAction(action, agc, 0x33, F("AGC"), agc_label, 0, _N(agc_label) - 1, false);
+    break;
+  case NR:
+    paramAction(action, nr, 0x34, F("NR"), NULL, 0, 8, false);
+    break;
+  case ATT:
+    paramAction(action, att, 0x35, F("ATT"), att_label, 0, 7, false);
+    break;
+  case ATT2:
+    paramAction(action, att2, 0x36, F("ATT2"), NULL, 0, 16, false);
+    break;
+  case NOISE_GATE:
+    paramAction(action, vox_thresh, 0x37, F("NOISE GATE"), NULL, 0, 255, false);
+    break;
+  case TX_DRIVE:
+    paramAction(action, drive, 0x41, F("TX DRIVE"), NULL, 0, 8, false);
+    break;
+  case PWM_MIN:
+    paramAction(action, pwm_min, 0x42, F("PA BIAS MIN"), NULL, 0, pwm_max - 1, false);
+    break;
+  case PWM_MAX:
+    paramAction(action, pwm_max, 0x43, F("PA BIAS MAX"), NULL, pwm_min, 255, false);
+    break;
+  case VFO_XTAL:
+    paramAction(action, si5351.fxtal, 0x44, F("REF FREQ"), NULL, 20000000, 28000000, false);
+    break;
+  case IQ_ADJ:
+    paramAction(action, rx_ph_q, 0x45, F("IQ PHASE"), NULL, 0, 180, false);
+    break;
+  case QUAD_ACTIVE:
+    paramAction(action, quad_enabled, 0x46, F("QUAD"), offon_label, 0, 1, false);
+    break;
+  case BAND:
+    paramAction(action, bandsel, 0x51, F("PEBBLE BAND"), band_label, 0, 1, false);
+    break;
+  case ROTARY_SWAP:
+    paramAction(action, rotxxx_swap, 0x52, F("ROTARY SWAP"), offon_label, 0, 1, false);
     break;
   case MY_NAME:
     if (action == LOAD) {
@@ -2801,7 +2660,7 @@ int8_t paramAction(uint8_t action, uint8_t id) {
       eeprom_write_block(my_name, (void *)USERNAME_ADDRESS, USERNAME_LENGTH);
     } else if (action == SKIP) {
     } else {
-      paramAction(action, my_name, 0x56, F("MY NAME"), USERNAME_LENGTH);
+      paramAction(action, my_name, 0x53, F("USER NAME"), USERNAME_LENGTH);
     }
     break;
   case MY_CALL:
@@ -2816,12 +2675,15 @@ int8_t paramAction(uint8_t action, uint8_t id) {
       eeprom_write_block(my_call, (void *)CALLSIGN_ADDRESS, CALLSIGN_LENGTH);
     } else if (action == SKIP) {
     } else {
-      paramAction(action, my_call, 0x57, F("MY CALL"), CALLSIGN_LENGTH);
+      paramAction(action, my_call, 0x54, F("USER CALLSIGN"), CALLSIGN_LENGTH);
     }
+    break;
+  case PRACTICE:
+    paramAction(action, practice, 0x55, F("PRACTICE"), offon_label, 0, 1, false);
     break;
   case FW_VER:
     if (action == UPDATE_MENU) {
-      printlabel(action, 0x44, F("PEBBLE VER"));
+      printlabel(action, 0x56, F("FIRMWARE VER"));
       lcd.print(F(VERSION));
       lcd_blanks(1);
       lcd.print(F(RELDATE));  // release date
@@ -2830,6 +2692,50 @@ int8_t paramAction(uint8_t action, uint8_t id) {
       paramAction(action, eeprom_version, 0, NULL, NULL, 0, 0, false);
     }
     break;
+
+  // =========================================================================
+  // FIXED EEPROM SUB-ITEMS (Presets & CW Messages)
+  // =========================================================================
+  case PRESET1: case PRESET2: case PRESET3: case PRESET4:
+  case PRESET5: case PRESET6: case PRESET7: case PRESET8: {
+    uint8_t idx = id - PRESET1;
+    uint16_t addr = PRESET_EEPROM + 4 * idx;
+    if (action == LOAD) {
+      uint32_t v = preset_get(idx);
+      eeprom_write_dword((uint32_t *)addr, v);
+    } else if (action == SAVE) {
+      uint32_t v = preset_get(idx);
+      eeprom_write_dword((uint32_t *)addr, v);
+    } else if (action == SKIP) {
+    }
+    break;
+  }
+
+  case CWMSG1: case CWMSG2: case CWMSG3:
+  case CWMSG4: case CWMSG5: case CWMSG6: {
+    uint8_t idx = id - CWMSG1;
+    uint16_t addr = CWMSG_EEPROM + idx * CW_MESSAGE_LENGTH;
+    if (action == LOAD) {
+      eeprom_read_block(cw_msg[idx], (void *)addr, CW_MESSAGE_LENGTH);
+    } else if (action == SAVE) {
+      for (uint8_t i = CW_MESSAGE_LENGTH; i > 0; i--) {
+        if (cw_msg[idx][i-1] == ' ' || cw_msg[idx][i-1] == 0)
+          cw_msg[idx][i-1] = 0;
+        else break;
+      }
+      eeprom_write_block(cw_msg[idx], (void *)addr, CW_MESSAGE_LENGTH);
+    } else if (action == SKIP) {
+    } else {
+      const __FlashStringHelper *lbl =
+          (idx==0) ? F("CQ MSG 1") :
+          (idx==1) ? F("CW MSG 2") :
+          (idx==2) ? F("CW MSG 3") :
+          (idx==3) ? F("CW MSG 4") :
+          (idx==4) ? F("CW MSG 5") : F("CW MSG 6");
+      paramAction(action, cw_msg[idx], 0x19, lbl, CW_MESSAGE_LENGTH);
+    }
+    break;
+  }
 
 #ifdef CAL_IQ
   case CALIB:
@@ -2870,14 +2776,19 @@ int8_t paramAction(uint8_t action, uint8_t id) {
   // Non-parameters
   case _NULL:
     menumode = NOT_IN_MENU;
+    in_settings = false;
     show_banner();
     change = true;
     break;
 
   default:
-    if ((action == NEXT_MENU) && (id != N_PARAMS))
-      id = paramAction(action, max(1, min(N_PARAMS, id + ((encoder_val > 0) ? 1 : -1))));
-    break; // keep iterating util menu item found
+    if (action == NEXT_MENU) {
+      uint8_t min_id = in_settings ? SETTINGS_MENU_START : MAIN_MENU_START;
+      uint8_t max_id = in_settings ? SETTINGS_MENU_END   : MAIN_MENU_END;
+      if (id > max_id) id = min_id;
+      else if (id < min_id) id = max_id;
+    }
+    break;
   }
   return id;
 }
@@ -2959,7 +2870,6 @@ void setup() {
     rx_state = i;
     t0 = micros();
     TIMER2_COMPA_vect();
-    // func_ptr();
     t1 = micros();
     load_rx[i] = (float)(t1 - t0) * (float)F_SAMP_RX * 100.0 / 1000000.0 *
                  16000000.0 / (float)F_CPU;
@@ -2978,7 +2888,7 @@ void setup() {
   initEncoder();
   delay(100);
   lcd.begin(16, 4);
-  for (i = 0; i != N_FONTS; i++) { // Init fonts
+  for (uint8_t i = 0; i != N_FONTS; i++) { // Init fonts
     pgm_cache_item(fonts[i], 8);
     lcd.createChar(0x01 + i, _item);
   }
@@ -3042,10 +2952,9 @@ void setup() {
     fatal(F("Vadc1"), audio2, 'V');
   }
   // Measure I2C Bus speed for Bulk Transfers
-  // si5351.freq(freq, 0, 90);
   wdt_reset();
   t0 = micros();
-  for (i = 0; i != 1000; i++)
+  for (uint16_t i = 0; i != 1000; i++)
     si5351.SendPLLRegisterBulk();
   t1 = micros();
   uint32_t speed = (1000000 * 8 * 7) / (t1 - t0); // speed in kbit/s
@@ -3057,7 +2966,7 @@ void setup() {
   si5351.freq(freq, 0, 90);
   wdt_reset();
   uint16_t i2c_error = 0; // number of I2C byte transfer errors
-  for (i = 0; i != 1000; i++) {
+  for (uint16_t i = 0; i != 1000; i++) {
     si5351.freq_calc_fast(i);
     si5351.SendPLLRegisterBulk();
     #define SI_SYNTH_PLL_A 26
@@ -3130,7 +3039,7 @@ void loop() {
     } else if (!tx) { // VOX activated, no audio detected -> RX
       switch_rxtx(0);
       vox_tx = 0;
-      delay(32); // delay(10);
+      delay(32);
     }
   }
 
@@ -3245,8 +3154,6 @@ void loop() {
 
   // button-left, button-right, button-encoder
   // single-click, double-click, push-long, push-and-turn
-  // (event codes defined at file scope)
-
   if (BUTTON_PRESSED) {
     // Left-/Right-/Rotary-button (while not already pressed)
     if (!((event & PL) ||
@@ -3300,19 +3207,18 @@ void loop() {
       menumode = SELECT_MENU;
       break;
     case BL | SC:
-      // While editing a CW message or user-info string:
+      // While editing a CW message string:
       // Menu = cancel (discard) and return to the picker on the same slot.
-      if (menumode >= SELECT_VALUE &&
-          ((menu >= CWMSG1 && menu <= CWMSG6) ||
-           menu == MY_NAME || menu == MY_CALL)) {
+      if (menumode >= SELECT_VALUE && (menu >= CWMSG1 && menu <= CWMSG6)) {
         return_to_picker(false);   // discard changes
         break;
       }
       int8_t _menumode;
       if (menumode == NOT_IN_MENU) {
         _menumode = SELECT_MENU;
-        if (menu == 0)
-          menu = 1;
+        in_settings = false;
+        if (menu < MAIN_MENU_START || menu > MAIN_MENU_END)
+          menu = MAIN_MENU_START;
       }
       else if (menumode == SELECT_MENU) {
         if (menu == FW_VER) {
@@ -3323,19 +3229,30 @@ void loop() {
       }
       else if (menumode >= SELECT_VALUE) {
         paramAction(SAVE, menu);
-        _menumode = NOT_IN_MENU;
+        if (in_settings) {
+          // If we were editing a setting value
+          // pressing Menu saves and goes back to browsing Settings list
+          _menumode = SELECT_MENU;
+        } else {
+          _menumode = NOT_IN_MENU;
+        }
       }
       menumode = _menumode;
       break;
     case BL | DC:
       break;
     case BR | SC: // Mode change - Button Right, Single Click
-      // While editing a CW message or user-info string:
-      // Select = save and return to the picker on the same slot.
-      if (menumode >= SELECT_VALUE &&
-          ((menu >= CWMSG1 && menu <= CWMSG6) ||
-           menu == MY_NAME || menu == MY_CALL)) {
+      if (menumode >= SELECT_VALUE && (menu >= CWMSG1 && menu <= CWMSG6)) {
         return_to_picker(true);    // save changes
+        break;
+      }
+      // if we are browsing the Settings submenu
+      // pressing Select (BR) exits back to 1.10 SETTINGS
+      if (menumode == SELECT_MENU && in_settings) {
+        in_settings = false;
+        menu = SETTINGS;
+        menumode = SELECT_MENU;
+        paramAction(UPDATE_MENU, menu);
         break;
       }
       changedMode = true;
@@ -3368,7 +3285,6 @@ void loop() {
         vfosel = !vfosel;
         freq = vfo[vfosel];
         mode = vfomode[vfosel];
-        // make more generic:
         if (mode != CW)
           stepsize = STEP_1k;
         else
@@ -3384,6 +3300,12 @@ void loop() {
     case BE | SC:
       switch (menumode) {
         case NOT_IN_MENU: stepsize_change(+1);
+          break;
+        case SELECT_MENU:
+          // Pressing encoder while browsing menu enters the selected item
+          if (menu != FW_VER) {
+            menumode = SELECT_VALUE;
+          }
           break;
         case MENU_NEXT:
           _menumode = MENU_NEXT;
@@ -3422,7 +3344,6 @@ void loop() {
       stepsize = prev_stepsize[mode == CW];
       prev_filt[prev_mode == CW] = filt;
       filt = prev_filt[mode == CW];
-      // paramAction(UPDATE, MODE);
       vfomode[vfosel] = mode;
       paramAction(SAVE, (vfosel) ? MODEB : MODEA); // save vfoa/b changes
       paramAction(SAVE, MODE);
@@ -3432,32 +3353,40 @@ void loop() {
       change = true;
     } else {
       if (menumode == SELECT_MENU) {
-        menumode = NOT_IN_MENU;
-      } // short right-click while in menu: enter value selection screen
-      if (menumode >= SELECT_VALUE) {
+        if (in_settings) {
+          // Right-click while browsing Settings returns to Main menu at 1.10 Settings
+          in_settings = false;
+          menu = SETTINGS;
+        } else {
+          menumode = NOT_IN_MENU;
+        }
+      } else if (menumode >= SELECT_VALUE) {
+        // Right-click while editing a value saves and returns to the current menu list
         menumode = SELECT_MENU;
         change = true;
         paramAction(SAVE, menu);
-      } // short right-click while in value selection screen
-        // save and return to menu screen
+      }
     }
   }
 
   if ((menumode) || (prev_menumode != menumode)) { // Show parameter and value
     int8_t encoder_change = encoder_val;
     if ((menumode == SELECT_MENU) && encoder_change) {
-      menu += encoder_val; // Navigate through menu
-      if (menu > N_PARAMS)
-        menu = 1;
-      else if (menu < 1)
-        menu = N_PARAMS;
-      menu = paramAction(NEXT_MENU, menu); // auto probe next menu item
+      uint8_t min_id = in_settings ? SETTINGS_MENU_START : MAIN_MENU_START;
+      uint8_t max_id = in_settings ? SETTINGS_MENU_END   : MAIN_MENU_END;
+      menu += encoder_val; // Navigate through active menu level
+      if (menu > max_id)
+        menu = min_id;
+      else if (menu < min_id)
+        menu = max_id;
+      menu = paramAction(NEXT_MENU, menu);
       encoder_val = 0;
     }
     if (encoder_change || (prev_menumode != menumode))
       paramAction(UPDATE_MENU, (menumode) ? menu : 0);
     // force display refresh when exiting menu (required for PRESET picker)
     if ((prev_menumode != NOT_IN_MENU) && (menumode == NOT_IN_MENU)) {
+      in_settings = false;
       if (mode != CW) show_banner();
       display_vfo(freq);
       stepsize_showcursor();
@@ -3472,7 +3401,6 @@ void loop() {
           paramAction(SAVE, (vfosel) ? MODEB : MODEA);
           change = true;
           si5351.iqmsa = 0; // enforce PLL reset
-          // make more generic:
           if (mode != CW)
             stepsize = STEP_1k;
           else
@@ -3484,11 +3412,9 @@ void loop() {
             filt = 0;
         }
 
-        // if(menu == NR){ if(mode == CW) nr = false; }
         if (menu == VFOSEL) {
           freq = vfo[vfosel];
           mode = vfomode[vfosel];
-          // make more generic:
           if (mode != CW)
             stepsize = STEP_1k;
           else
@@ -3507,7 +3433,6 @@ void loop() {
         if (menu == BAND) {
           band_check();
         }
-        // if(menu == VOX){ if(vox){ vox_thresh-=1; } else { vox_thresh+=1; }; }
         if (menu == ATT) { // post-handling ATT parameter
           noInterrupts();
           adc_start(0, !(att & 0x01), F_ADC_CONV);
@@ -3516,15 +3441,10 @@ void loop() {
           admux[1] = ADMUX;
           interrupts();
           fastdigitalWrite(RX, !(att & 0x02));
-          // att bit 1 ON: attenuate -20dB by disabling
-          // RX line, switching Q5 (antenna input
-          // switch) into 100k resistence
           fastpinMode(AUDIO1, (att & 0x04) ? OUTPUT : INPUT);
-          // att bit 2 ON: attenuate -40dB by
-          // terminating ADC inputs with 10R
           fastpinMode(AUDIO2, (att & 0x04) ? OUTPUT : INPUT);
         }
-        if (menu == SIFXTAL) {
+        if (menu == VFO_XTAL) {
           change = true;
         }
         if ((menu == PWM_MIN) || (menu == PWM_MAX)) {
@@ -3598,7 +3518,6 @@ void loop() {
   if (change && !tx && !vox_tx) {
     change = false;
     vfo[vfosel] = freq;
-    // save_event_time = millis() + 1000;
     save_event_time = millis() + 2000;
     if (menumode == NOT_IN_MENU) {
       display_vfo(freq);
@@ -3625,3 +3544,4 @@ void loop() {
   }
   wdt_reset();
 }
+
