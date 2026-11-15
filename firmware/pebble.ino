@@ -98,7 +98,7 @@ uint8_t bandsel = BAND_20M;
 #endif
 
 const char *vfosel_label[] = {"A", "B"};
-const char *mode_label[5] = {"LSB", "USB", "CW ", "FM ", "AM "};
+const char *mode_label[3] = {"LSB", "USB", "CW "};
 
 #define USERNAME_LENGTH  10
 #define CALLSIGN_LENGTH  10
@@ -219,18 +219,6 @@ char cw_msg[6][CW_MESSAGE_LENGTH] = {
     "FB RPTR TX 5W ANT EFW 73 CUAGN",
     "73 GL TU EE"
 };
-
-// string copy
-void cpy(char* dest, char* src) {
-  char* ptr = dest;
-  while ((*dest++ = *src++) != '\0');
-}
-
-// string cat
-void cat(char* dest, char* src) {
-  while (*dest != '\0') dest++;
-  while ((*dest++ = *src++) != '\0');
-}
 
 // configuration switches
 #define KEY_CLICK 1
@@ -822,20 +810,20 @@ static uint8_t pwm_max = 160;
 uint8_t prev_filt[] = {0, 4};
 
 const char *offon_label[2] = {"OFF", "ON"};
-const char *filt_label[N_FILT + 1] = {"Full", "3000", "2400", "1800",
+const char *filt_label[N_FILT + 1] = {"FULL", "3000", "2400", "1800",
                                       "500",  "200",  "100",  "50"};
 
-const char *stepsize_label[] = {"10M", "1M",  ".5M", "100k", "10k",
-                                "1k",  ".5k", "100", "10",   "1"};
+const char *stepsize_label[] = {"10M", "1M",  ".5M", "100K", "10K",
+                                "1K",  ".5K", "100", "10",   "1"};
 const char *att_label[] = {"0dB",   "-13dB", "-20dB", "-33dB",
                            "-40dB", "-53dB", "-60dB", "-73dB"};
-const char *smode_label[] = {"OFF", "dBm", "S", "Sbar", "WPM"};
+const char *smode_label[] = {"OFF", "DBM", "S", "SBAR", "WPM"};
 
 const char *agc_label[] = {"OFF", "FAST", "SLOW"};
 const char *cw_tone_label[] = {"600", "700"};
 const char *keyer_mode_label[] = { "STRAIGHT", "IAMBIC A", "IAMBIC B", "ULTIMATIC"};
 
-enum mode_t { LSB, USB, CW, FM, AM };
+enum mode_t { LSB, USB, CW };
 volatile uint8_t mode = USB;
 volatile uint16_t numSamples = 0;
 
@@ -1086,28 +1074,6 @@ void dsp_tx_cw() {
   OCR1AL = (p_sin >> (16 - tone_vol)) + 128;
 }
 
-void dsp_tx_am() {
-  ADCSRA |= (1 << ADSC);
-  OCR1BL = amp;
-  int16_t adc = ADC - 512;
-  int16_t in = (adc >> MIC_ATTEN);
-  in = in << (drive - 4);
-#define AM_BASE 32
-  in = max(0, min(255, (in + AM_BASE)));
-  amp = in; // lut[in];
-}
-
-void dsp_tx_fm() {
-  ADCSRA |= (1 << ADSC); // start next ADC conversion
-  OCR1BL = lut[255];     // submit amplitude to PWM register
-  si5351.SendPLLRegisterBulk(); // submit frequency registers to SI5351
-  int16_t adc = ADC - 512;      // 10-bit ADC sample
-  int16_t in = (adc >> MIC_ATTEN);
-  in = in << (drive);
-  int16_t df = in;
-  si5351.freq_calc_fast(df); // calculate SI5351 registers
-}
-
 // exponential averaging [Lyons 13.33.1]
 #define EA(y, x, one_over_alpha)               \
   (y) = (y) + ((x) - (y)) / (one_over_alpha);
@@ -1145,7 +1111,7 @@ uint8_t cw_msg_id = 0;       // selected message
 
 volatile uint8_t menumode = NOT_IN_MENU;
 
-// Button event codes (shared by main loop and picker)
+// button event codes
 enum event_t {
   BL  = 0x10,  // button left (menu)
   BR  = 0x20,  // button right (select)
@@ -1165,13 +1131,13 @@ enum picker_t {
   SUBMENU_USERINFO
 };
 uint8_t submenu_type = NOT_SUBMENU;
-uint8_t picker_sel  = 0;   // current slot within the active picker
+uint8_t picker_sel  = 0;   // current slot within the submenu
 
-// Menu / parameter action codes (needed by picker before paramAction is defined)
+// menu / parameter action codes (needed by picker before paramAction is defined)
 enum action_t { UPDATE, UPDATE_MENU, NEXT_MENU, LOAD, SAVE, SKIP, NEXT_CH };
 volatile int8_t menu = 0; // current parameter id selected in menu
 
-// Forward declarations used by the picker
+// forward declarations used by the picker
 void show_banner();
 void cw_tx_msg(char *msg);
 int8_t paramAction(uint8_t action, uint8_t id = ALL);
@@ -1182,7 +1148,7 @@ static int32_t avg = 256;
 static uint8_t sym;
 static uint32_t amp32 = 0;
 volatile uint32_t _amp32 = 0;
-static char out[] = "                ";
+static char cwbuf[] = "                ";
 volatile uint8_t cw_event = false;
 
 // print spaces
@@ -1197,8 +1163,8 @@ void printsym(bool submit = true) {
     char ch = pgm_read_byte_near(m2c + sym);
     if (ch != '*') {
       for (uint8_t i=0; i<15; i++)
-        out[i] = out[i + 1];
-      out[15] = ch;
+        cwbuf[i] = cwbuf[i + 1];
+      cwbuf[15] = ch;
       cw_event = true; // update display
     }
   }
@@ -1377,20 +1343,6 @@ inline int16_t process_agc(int16_t in) {
   return out;
 }
 
-inline int16_t process_nr_old(int16_t ac) {
-  ac = ac >> (6 - abs(ac)); // non-linear below amp of 6; to reduce noise
-                            // (switchoff agc and tune-up volume until noise
-                            // dissapears, todo:extra volume control needed)
-  ac = ac << 3;
-  return ac;
-}
-
-inline int16_t process_nr_old2(int16_t ac) {
-  static int16_t ea1;
-  ea1 = EA(ea1, ac, 64); // alpha=1/64=0.0156
-  return ea1;
-}
-
 inline int16_t process_nr(int16_t in) {
   static int16_t ea1;
   ea1 = EA(ea1, in, 1 << (nr - 1));
@@ -1486,16 +1438,6 @@ inline int16_t filt_var(int16_t za0) {
 #define __UA 256
 #define __atan2(z)  (__UA/8  + __UA/22) * z
 
-inline int16_t _arctan3(int16_t q, int16_t i) {
-  int16_t r;
-  if (abs(q) > abs(i))
-    r = __UA / 4 - __atan2(abs(i) / abs(q));
-  else
-    r = (i == 0) ? 0 : __atan2(abs(q) / abs(i));
-  r = (i < 0) ? __UA / 2 - r : r;
-  return (q < 0) ? -r : r;
-}
-
 static uint32_t absavg256 = 0;
 volatile uint32_t _absavg256 = 0;
 volatile int16_t i, q;
@@ -1511,26 +1453,24 @@ inline int16_t slow_dsp(int16_t i_ac2, int16_t q_ac2) {
   // Hilbert transform, BasicDSP model:  outi= fir(inl,  0, 0, 0, 0, 0,  0,  0,
   // 1,   0, 0,   0, 0,  0, 0, 0, 0); outq = fir(inr, 2, 0, 8, 0, 21, 0, 79, 0,
   // -79, 0, -21, 0, -8, 0, -2, 0) / 128;
-  if (mode != AM && mode != FM) {
-    qh = ((v[0] - q_ac2) + (v[2] - v[12]) * 4) / 64 +
-         ((v[4] - v[10]) + (v[6] - v[8])) / 8 +
-         ((v[4] - v[10]) * 5 - (v[6] - v[8])) / 128 + (v[6] - v[8]) / 2;
-    // Hilbert transform, 43dB side-band rejection in 650..3400Hz (@8kSPS)
-    v[0] = v[1];
-    v[1] = v[2];
-    v[2] = v[3];
-    v[3] = v[4];
-    v[4] = v[5];
-    v[5] = v[6];
-    v[6] = v[7];
-    v[7] = v[8];
-    v[8] = v[9];
-    v[9] = v[10];
-    v[10] = v[11];
-    v[11] = v[12];
-    v[12] = v[13];
-    v[13] = q_ac2;
-  } // Do not remove, separate block for separate v[]!!!!
+  // Hilbert transform, 43dB side-band rejection in 650..3400Hz (@8kSPS)
+  qh = ((v[0] - q_ac2) + (v[2] - v[12]) * 4) / 64 +
+       ((v[4] - v[10]) + (v[6] - v[8])) / 8 +
+       ((v[4] - v[10]) * 5 - (v[6] - v[8])) / 128 + (v[6] - v[8]) / 2;
+  v[0] = v[1];
+  v[1] = v[2];
+  v[2] = v[3];
+  v[3] = v[4];
+  v[4] = v[5];
+  v[5] = v[6];
+  v[6] = v[7];
+  v[7] = v[8];
+  v[8] = v[9];
+  v[9] = v[10];
+  v[10] = v[11];
+  v[11] = v[12];
+  v[12] = v[13];
+  v[13] = q_ac2;
 
   i_ac2 >>= att2; // digital gain control
   i = i_ac2;
@@ -1544,27 +1484,11 @@ inline int16_t slow_dsp(int16_t i_ac2, int16_t q_ac2) {
   vi[5] = vi[6];
   vi[6] = i_ac2; // Delay to match Hilbert transform on Q branch
 
-  if (mode == AM) {
-    acm = -i - q; // S-Meter
-    ac = magn(i, q); // AM = SQRT (I * I + Q * Q)
-    static int16_t as_last;
-    int16_t as = ac + (int16_t)((float)as_last * 0.9999f);
-    ac = as - as_last;
-    as_last = as;
-
-  } else if (mode == FM) {
-    acm = -i - q; // S-Meter
-    static int16_t zi = i;
-    ac = ((ac + i) * zi);
-    zi = i;
-  }
-  else {
-    // USB, LSB, CW
-    // inverting I and Q helps dampening a
-    // feedback-loop between PWM out and ADC inputs
-    acm = -id - qh;
-    ac = acm;
-  }
+  // USB, LSB, CW
+  // inverting I and Q helps dampening a
+  // feedback-loop between PWM out and ADC inputs
+  acm = -id - qh;
+  ac = acm;
   // Set S-Meter level
   static uint8_t absavg256cnt;
   if (!(absavg256cnt--)) {
@@ -1582,10 +1506,22 @@ inline int16_t slow_dsp(int16_t i_ac2, int16_t q_ac2) {
   }
   // volume control
   switch (volume) {
-    case 16: ac = ac + (ac >> 1);
-    case 15: break;
-    case 14: ac = (ac >> 1) + (ac >> 2);
-    default: ac = ac >> (15-volume);
+    case 16: break;
+    case 15: ac = (ac >> 1) + (ac >> 2); break;
+    case 14: ac = (ac >> 1); break;
+    case 13: ac = (ac >> 2) + (ac >> 3); break;
+    case 12: ac = (ac >> 2); break;
+    case 11: ac = (ac >> 3) + (ac >> 4); break;
+    case 10: ac = (ac >> 3); break;
+    case  9: ac = (ac >> 4) + (ac >> 5); break;
+    case  8: ac = (ac >> 4); break;
+    case  7: ac = (ac >> 5) + (ac >> 6); break;
+    case  6: ac = (ac >> 5); break;
+    case  5: ac = (ac >> 6) + (ac >> 7); break;
+    case  4: ac = (ac >> 6); break;
+    case  3: ac = (ac >> 7) + (ac >> 8); break;
+    case  2: ac = (ac >> 7); break;
+    default: ac = 0; break;
   }
   if (nr) ac = process_nr(ac);
   if (filt) ac = filt_var(ac);
@@ -1733,15 +1669,14 @@ inline int16_t sdr_rx_common_q() {
   return ac;
 }
 
-inline int16_t sdr_rx_common_i() // Get RX AC samples
-{
+// Get RX AC samples
+inline int16_t sdr_rx_common_i() {
   ADMUX = admux[1];
   ADCSRA |= (1 << ADSC);
   int16_t adc = ADC - 511;
   static int16_t prev_adc;
   int16_t ac = (prev_adc + adc) >> 1;
   prev_adc = adc;
-
 #ifdef AF_OUT
   if (_init) {
     ocomb = 0;
@@ -1979,25 +1914,27 @@ int16_t smeter(int16_t ref = 0) {
 #define N_CWMSG    6
 #define N_USERINFO 2
 
-const uint32_t preset_default[N_PRESET] PROGMEM = {
-  14030000UL | ((uint32_t)CW << 24), 14060000UL | ((uint32_t)CW << 24), 14100000UL | ((uint32_t)CW << 24),
-  14250000UL | ((uint32_t)USB << 24), 14285000UL | ((uint32_t)USB << 24), 0, 0, 0
-};
-
 uint32_t preset_get(uint8_t i) {  // 0 = empty slot
-  uint32_t v = eeprom_read_dword((const uint32_t *)(PRESET_EEPROM + 4 * i));
-  uint32_t f = v & 0xFFFFFFUL;
-  if ((f < FREQ_LIMIT_LOW) || (f > FREQ_LIMIT_HIGH) || ((v >> 24) > AM))
-    v = pgm_read_dword(&preset_default[i]);
-  return v;
+  uint32_t eeval = eeprom_read_dword((const uint32_t *)(PRESET_EEPROM + 4 * i));
+  uint32_t emode = eeval >> 24;
+  uint32_t efreq = eeval & 0xFFFFFFUL;
+  uint8_t  oob = 0;
+  if (emode > CW)              {oob=1; emode = CW;}
+  if (efreq < FREQ_LIMIT_LOW)  {oob=1; efreq = FREQ_LIMIT_LOW;}
+  if (efreq > FREQ_LIMIT_HIGH) {oob=1; efreq = FREQ_LIMIT_HIGH;}
+  if (oob) eeval = (emode << 24) | (efreq & 0xFFFFFFUL);
+  return eeval;
 }
 
 void preset_print(uint32_t v) {
   uint32_t f = v & 0xFFFFFFUL;
   lcd.print(f / 1000000UL); lcd.print('.');
   uint16_t r = (f % 1000000UL) / 100;
-  if (r < 1000) lcd.print('0'); if (r < 100) lcd.print('0'); if (r < 10) lcd.print('0');
-  lcd.print(r); lcd.print(' '); lcd.print(mode_label[v >> 24]);
+  if (r < 1000) lcd.print('0');
+  if (r < 100)  lcd.print('0');
+  if (r < 10)   lcd.print('0');
+  lcd.print(r); lcd.print(' ');
+  lcd.print(mode_label[v >> 24]);
 }
 
 static void submenu_preset() {
@@ -2065,6 +2002,40 @@ void submenu_exit() {
   submenu_type = NOT_SUBMENU;
   show_banner();
   change = true;
+}
+
+// return from CW-message or user-info string edit
+// if save==true writes EEPROM; if save==false the edit is discarded
+static void return_to_picker(bool save) {
+  if (menu >= CWMSG1 && menu <= CWMSG6) {
+    uint8_t idx = menu - CWMSG1;
+    if (save) {
+      paramAction(SAVE, menu);
+    } else {
+      // discard edit and reload from EEPROM
+      eeprom_read_block(cw_msg[idx],
+      (void *)(CWMSG_EEPROM + idx * CW_MESSAGE_LENGTH), CW_MESSAGE_LENGTH);
+    }
+    picker_sel = idx;
+    menu = CWMSGS;                 // so a later Menu press opens 4.2, not the message
+    menumode = NOT_IN_MENU;
+    submenu_type = SUBMENU_CWMSG;
+    submenu_draw();
+  } else if (menu == MY_NAME || menu == MY_CALL) {
+    if (save) {
+      paramAction(SAVE, menu);
+    } else {
+      if (menu == MY_NAME)
+        eeprom_read_block(my_name, (void *)USERNAME_ADDRESS, USERNAME_LENGTH);
+      else
+        eeprom_read_block(my_call, (void *)CALLSIGN_ADDRESS, CALLSIGN_LENGTH);
+    }
+    picker_sel = (menu == MY_NAME) ? 0 : 1;
+    menu = USER_INFO;
+    menumode = NOT_IN_MENU;
+    submenu_type = SUBMENU_USERINFO;
+    submenu_draw();
+  }
 }
 
 static void preset_store() {
@@ -2137,12 +2108,15 @@ bool picker_handle_event(uint8_t event) {
     break;
 
   case SUBMENU_USERINFO:
-    // Encoder = edit, Select = back
+    // click encoder to edit
     if (event == (BE | SC)) {
       submenu_type = NOT_SUBMENU;
       menu = (picker_sel == 0) ? MY_NAME : MY_CALL;
       menumode = SELECT_VALUE;
       paramAction(UPDATE_MENU, menu);
+    } else if (event == (BR | SC)) {
+      menu = USER_INFO;   // leave menu at submenu entry
+      submenu_exit();
     }
     break;
 
@@ -2231,10 +2205,8 @@ void switch_rxtx(uint8_t tx_enable) {
     _centiGain = centiGain; // backup AGC setting
     semi_qsk_timeout = 0;
     switch (mode) {
-      case CW: func_ptr = dsp_tx_cw; break;
-      case AM: func_ptr = dsp_tx_am; break;
-      case FM: func_ptr = dsp_tx_fm; break;
-      default: func_ptr = dsp_tx; break;
+      case CW: func_ptr = dsp_tx_cw; break;  // CW
+      default: func_ptr = dsp_tx; break;     // SSB
     }
   } else {
     // RX
@@ -2417,7 +2389,7 @@ void cw_tx_msg(char *msg) {
   cw_msg_event = 0;
   uint8_t interrupted = cw_tx_str(expanded);
   // clear the decoder output buffer
-  for (uint8_t i = 0; i < 16; i++) out[i] = ' ';
+  for (uint8_t i = 0; i < 16; i++) cwbuf[i] = ' ';
   // only reschedule if CQ message and not interrupted
   if (!interrupted && cw_msg_interval && (cw_msg[cw_msg_id][0] == 'C') &&
      (cw_msg[cw_msg_id][1] == 'Q')) {
@@ -2438,46 +2410,6 @@ void process_encoder_tuning_step(int8_t steps) {
     freq = max(FREQ_LIMIT_LOW, min(FREQ_LIMIT_HIGH, freq));
   }
   change = true;
-}
-
-// Reduces power from 110mA to 70mA
-void powerDown() {
-  lcd.setCursor(0,1);
-  lcd.print(F("Power-off 73 :-)"));
-  lcd_blanks(10);
-  MCUSR = ~(1 << WDRF); // Must be done before wdt_disable()
-  wdt_disable();
-  timer2_stop();
-  timer1_stop();
-  adc_stop();
-  si5351.powerDown();
-  delay(1500);
-  // Disable external interrupts INT0, INT1, Pin Change
-  PCICR = 0;
-  PCMSK0 = 0;
-  PCMSK1 = 0;
-  PCMSK2 = 0;
-  // Disable internal interrupts
-  TIMSK0 = 0;
-  TIMSK1 = 0;
-  TIMSK2 = 0;
-  WDTCSR = 0;
-  // Enable BUTTON Pin Change interrupt
-  *digitalPinToPCMSK(BUTTONS) |= (1 << digitalPinToPCMSKbit(BUTTONS));
-  *digitalPinToPCICR(BUTTONS) |= (1 << digitalPinToPCICRbit(BUTTONS));
-  // Power-down sub-systems
-  PRR = 0xff;
-  lcd.noDisplay();
-  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-  sleep_enable();
-  interrupts();
-  sleep_bod_disable();
-  sleep_cpu();
-  sleep_disable();
-  do {
-    wdt_enable(WDTO_15MS);
-    for (;;);
-  } while (0); // soft reset by trigger watchdog timeout
 }
 
 // clear the top line
@@ -2889,7 +2821,7 @@ int8_t paramAction(uint8_t action, uint8_t id) {
     break;
   case FW_VER:
     if (action == UPDATE_MENU) {
-      printlabel(action, 0x44, F("PEBBLE 4.00E"));
+      printlabel(action, 0x44, F("PEBBLE VER"));
       lcd.print(F(VERSION));
       lcd_blanks(1);
       lcd.print(F(RELDATE));  // release date
@@ -3163,6 +3095,8 @@ void setup() {
   rit = false; // disable RIT
   freq = vfo[vfosel];
   band_check();
+  if (vfomode[VFOA] > CW) vfomode[VFOA] = CW;
+  if (vfomode[VFOB] > CW) vfomode[VFOB] = CW;
   mode = vfomode[vfosel];
   build_lut();
   delay(800);
@@ -3210,7 +3144,7 @@ void loop() {
       lcd.noCursor();
       cw_event = false;
       lcd.setCursor(0,0);
-      lcd.print(out + offset);
+      lcd.print(cwbuf + offset);
       stepsize_showcursor();
     } else if ((!semi_qsk_timeout) && (!vox_tx))
       smeter();
@@ -3366,16 +3300,12 @@ void loop() {
       menumode = SELECT_MENU;
       break;
     case BL | SC:
-      if ((menu == MY_NAME) || (menu == MY_CALL)) {
-        if (menumode >= SELECT_VALUE) paramAction(SAVE, menu);
-        menumode = NOT_IN_MENU;
-        submenu_exit();
-        break;
-      }
-      if ((menu >= CWMSG1) && (menu <= CWMSG6)) {
-        if (menumode >= SELECT_VALUE) paramAction(SAVE, menu);
-        menumode = NOT_IN_MENU;
-        submenu_exit();
+      // While editing a CW message or user-info string:
+      // Menu = cancel (discard) and return to the picker on the same slot.
+      if (menumode >= SELECT_VALUE &&
+          ((menu >= CWMSG1 && menu <= CWMSG6) ||
+           menu == MY_NAME || menu == MY_CALL)) {
+        return_to_picker(false);   // discard changes
         break;
       }
       int8_t _menumode;
@@ -3400,10 +3330,15 @@ void loop() {
     case BL | DC:
       break;
     case BR | SC: // Mode change - Button Right, Single Click
-      if (!(menumode >= SELECT_VALUE && (menu >= CWMSG1 && menu <= CWMSG6
-        || menu == MY_NAME || menu == MY_CALL))) {
-        changedMode = true;
+      // While editing a CW message or user-info string:
+      // Select = save and return to the picker on the same slot.
+      if (menumode >= SELECT_VALUE &&
+          ((menu >= CWMSG1 && menu <= CWMSG6) ||
+           menu == MY_NAME || menu == MY_CALL)) {
+        return_to_picker(true);    // save changes
+        break;
       }
+      changedMode = true;
       break;
     case BR | DC:
       filt++;
@@ -3480,8 +3415,8 @@ void loop() {
     changedMode = false;
     if (menumode == NOT_IN_MENU) {
       prev_mode = mode;
-      mode++; // Change to next mode += 1
-      if (mode > AM)  mode = LSB;
+      mode++;
+      if (mode > CW)  mode = LSB;
       if (mode == CW) nr = 0;
       prev_stepsize[prev_mode == CW] = stepsize;
       stepsize = prev_stepsize[mode == CW];
@@ -3644,6 +3579,12 @@ void loop() {
       if (encoder_val) {
         picker_encoder(encoder_val);
         encoder_val = 0;
+      }
+      if (cw_event && submenu_type == SUBMENU_CWMSG) {
+        cw_event = false;
+        lcd.noCursor();
+        lcd.setCursor(0, 0);
+        lcd.print(cwbuf); // print the decoder buffer
       }
     } else {
       // hack for reversing rotary-encoder direction
