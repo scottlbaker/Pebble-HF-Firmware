@@ -35,7 +35,7 @@
 // ============================================================================
 
 #define VERSION "1.00c"            // firmware version
-#define RELDATE "11-14-26"         // firmware release date
+#define RELDATE "11-15-26"         // firmware release date
 #define EEPROM_VERSION  2          // track eeprom layout changes
 
 // pin definitions
@@ -167,13 +167,17 @@ enum params_t {
   MODEA,         // 38
   MODEB,         // 39
 
+  MODE_FILT,     // 40
+  MODE_NR,       // 41
+  MODE_STEP,     // 42
+
   // Optional parameters for debug and calibration
-  CALIB,         // 40
-  SR,            // 41
-  CPULOAD,       // 42
-  PARAM_A,       // 43
-  PARAM_B,       // 44
-  PARAM_C,       // 45
+  CALIB,         // 43
+  SR,            // 44
+  CPULOAD,       // 45
+  PARAM_A,       // 46
+  PARAM_B,       // 47
+  PARAM_C,       // 48
 
   // eeprom addresses for the sub-menu vars
   PRESET1 = 100,
@@ -211,7 +215,6 @@ enum step_t {
 uint32_t stepsizes[10] = {10000000, 1000000, 500000, 100000, 10000,
                           1000,     500,     100,    10,     1};
 volatile uint8_t stepsize = STEP_1k;
-uint8_t prev_stepsize[] = {STEP_1k, STEP_500}; // stepsize for SSB, CW
 
 // name and callsign can be edited
 char my_name[USERNAME_LENGTH] = {"MYNAME"};
@@ -231,16 +234,6 @@ char cw_msg[6][CW_MESSAGE_LENGTH] = {
 
 // configuration switches
 #define KEY_CLICK 1
-#define AF_OUT    1
-
-////////////////////////////////////////////////////////////////////////
-// SSB TX experimentation - by 9M2GRC
-// Only one of EXPSSB01 / EXPSSB02 / EXPSSB03 should be enabled
-////////////////////////////////////////////////////////////////////////
-
-//#define EXPSSB01
-//#define EXPSSB02
-#define EXPSSB03
 #define FIXEDSCALE
 
 #define SI5351_ADDR 0x60 // si5351 I2C address
@@ -808,8 +801,11 @@ static uint8_t pwm_min = 0;
 // PWM value for which PA reaches its maximum
 static uint8_t pwm_max = 160;
 
+uint8_t mode_filt[] = {0, 4}; // filter for SSB, CW
+uint8_t mode_step[] = {STEP_1k, STEP_500}; // stepsize for SSB, CW
+uint8_t mode_nr[] = {2, 0};   // noise reduction for SSB, CW
+
 #define N_FILT 7
-uint8_t prev_filt[] = {0, 4};
 
 const char *offon_label[2] = {"OFF", "ON"};
 const char *filt_label[N_FILT + 1] = {"FULL", "3000", "2400", "1800",
@@ -874,18 +870,11 @@ inline int16_t ssb(int16_t in) {
   for (j = 0; j != 15; j++)
     v[j] = v[j + 1];
 
-////////////////////////////////////////////////////////////////////////
-// SSB TX experimentation - EXPSSB01 / EXPSSB02 / EXPSSB03
-// 03/02/2026 - 9M2GRC
-////////////////////////////////////////////////////////////////////////
-
-#ifdef EXPSSB03
-  // Experimental DC-before-compression voice path; 16-bit arithmetic only.
-  // dc and z1 retain the existing static int16_t declarations above.
-  dc = (in + dc) / 2;              // same HP coefficient as uploaded EXPSSB01
-  int16_t mic = in - dc;           // remove offset BEFORE nonlinear processing
-  int16_t ac = mic * 2 + z1;       // original gain and delayed-state ordering
-  z1 = (mic - 12 * z1) / 13;       // preserve uploaded EXPSSB01 shaping
+  // experimental DC-before-compression voice path by 9M2GRC
+  dc = (in + dc) / 2;
+  int16_t mic = in - dc;  // remove DC offset
+  int16_t ac = mic * 2 + z1;
+  z1 = (mic - 12 * z1) / 13;
 
   if (ac > 250) ac = 250 + (ac - 250) / 2;
   else if (ac < -250) ac = -250 - (-250 - ac) / 2;
@@ -897,46 +886,6 @@ inline int16_t ssb(int16_t in) {
   else if (ac < -320) ac = -320;
   v[15] = ac;
 
-#else // original experimental/default branches preserved below
-#ifdef EXPSSB01
-  int16_t ac = in * 2; //   6dB gain (justified since lpf/hpf is losing -3dB)
-  ac = ac + z1;        // lpf
-  z1 = (in - (8) * z1) / (8 + 1); // lpf
-  // Smoothing clipping limiter
-  if (ac > 250) {
-    ac = 250 + (ac - 250) / 2;
-  } else if (ac < -250) {
-    ac = -250 - (-250 - ac) / 2;
-  }
-  dc = (ac + (2) * dc) / (2 + 1);
-  v[15] = (ac - dc);
-#else
-#ifdef EXPSSB02
-  int16_t ac = in * 2;
-
-  // Smooth copy of the microphone input
-  z1 = (3 * z1 + in) / 4;
-
-  // Gentle treble emphasis: half the previous boost
-  ac += (in - z1) / 2;
-
-  // Smoothing clipping limiter
-  if (ac > 250) {
-    ac = 250 + (ac - 250) / 2;
-  } else if (ac < -250) {
-    ac = -250 - (-250 - ac) / 2;
-  }
-  dc = (ac + (2) * dc) / (2 + 1);
-  v[15] = ac - dc;
-#else // Original SSB process
-  int16_t ac = in * 2;             // 6dB gain (justified since lpf/hpf is losing -3dB)
-  ac = ac + z1;                    // lpf
-  z1 = (in - (2) * z1) / (2 + 1);  // lpf: notch at Fs/2 (alias rejecting)
-  dc = (ac + (2) * dc) / (2 + 1);  // hpf: slow average
-  v[15] = (ac - dc);               // hpf (dc decoupling)
-#endif // EXPSSB02
-#endif // EXPSSB01
-#endif // EXPSSB03
   i = v[7] *
       2; // 6dB gain for i, q  (to prevent quanitization issues in hilbert
          // transformer and phase calculation, corrected for magnitude calc)
@@ -1540,7 +1489,6 @@ static uint8_t tc = 0;
 void process(int16_t i_ac2, int16_t q_ac2) {
   static int16_t ac3;
 
-#ifdef AF_OUT
   static int16_t ozd1, ozd2; // Audio output stage
   if (_init) {
     ac3 = 0;
@@ -1550,7 +1498,6 @@ void process(int16_t i_ac2, int16_t q_ac2) {
   }
   int16_t od1 = ac3 - ozd1; // Comb section
   ocomb = od1 - ozd2;
-#endif // AF_OUT
 
 #define OUTLET 1
 #ifdef OUTLET
@@ -1559,10 +1506,8 @@ void process(int16_t i_ac2, int16_t q_ac2) {
 
   interrupts();
 
-#ifdef AF_OUT
   ozd2 = od1;
   ozd1 = ac3;
-#endif // AF_OUT
 
   ac3 = slow_dsp(i_ac2, q_ac2);
 
@@ -1652,7 +1597,6 @@ inline int16_t sdr_rx_common_i() {
   static int16_t prev_adc;
   int16_t ac = (prev_adc + adc) >> 1;
   prev_adc = adc;
-#ifdef AF_OUT
   if (_init) {
     ocomb = 0;
     ozi1 = 0;
@@ -1661,7 +1605,6 @@ inline int16_t sdr_rx_common_i() {
   ozi2 = ozi1 + ozi2; // Integrator section
   ozi1 = ocomb + ozi1;
   OCR1AL = min(max((ozi2 >> 5) + 128, 0), 255);
-#endif // AF_OUT
   return ac;
 }
 
@@ -2773,6 +2716,16 @@ int8_t paramAction(uint8_t action, uint8_t id) {
     paramAction(action, vfomode[VFOB], 0, NULL, NULL, 0, 0, false);
     break;
 
+  case MODE_FILT:
+    actionCommon(action, mode_filt, sizeof(mode_filt));
+    break;
+  case MODE_NR:
+    actionCommon(action, mode_nr, sizeof(mode_nr));
+    break;
+  case MODE_STEP:
+    actionCommon(action, mode_step, sizeof(mode_step));
+    break;
+
   // Non-parameters
   case _NULL:
     menumode = NOT_IN_MENU;
@@ -3007,6 +2960,10 @@ void setup() {
   if (vfomode[VFOA] > CW) vfomode[VFOA] = CW;
   if (vfomode[VFOB] > CW) vfomode[VFOB] = CW;
   mode = vfomode[vfosel];
+  // init the mode-specific parameters
+  filt = mode_filt[mode == CW];
+  nr = mode_nr[mode == CW];
+  stepsize = mode_step[mode == CW];
   build_lut();
   delay(800);
   start_rx();
@@ -3280,7 +3237,7 @@ void loop() {
       break;
     case BR | PL:
       rit = !rit;
-      stepsize = (rit) ? STEP_10 : prev_stepsize[mode == CW];
+      stepsize = (rit) ? STEP_10 : mode_step[mode == CW];
       if (!rit) { // after RIT comes VFO A/B swap
         vfosel = !vfosel;
         freq = vfo[vfosel];
@@ -3340,10 +3297,10 @@ void loop() {
       mode++;
       if (mode > CW)  mode = LSB;
       if (mode == CW) nr = 0;
-      prev_stepsize[prev_mode == CW] = stepsize;
-      stepsize = prev_stepsize[mode == CW];
-      prev_filt[prev_mode == CW] = filt;
-      filt = prev_filt[mode == CW];
+      mode_step[prev_mode == CW] = stepsize;
+      stepsize = mode_step[mode == CW];
+      mode_filt[prev_mode == CW] = filt;
+      filt = mode_filt[mode == CW];
       vfomode[vfosel] = mode;
       paramAction(SAVE, (vfosel) ? MODEB : MODEA); // save vfoa/b changes
       paramAction(SAVE, MODE);
