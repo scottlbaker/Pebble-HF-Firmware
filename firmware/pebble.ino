@@ -34,9 +34,9 @@
 //
 // ============================================================================
 
-#define VERSION "1.00c"            // firmware version
-#define RELDATE "11-15-26"         // firmware release date
-#define EEPROM_VERSION  2          // track eeprom layout changes
+#define VERSION "1.00d"            // firmware version
+#define TIMESTAMP "11182049"       // firmware timestamp
+#define EEPROM_VERSION   2         // track eeprom layout changes
 
 // pin definitions
 #define LCD_D4      0   // PD0     (pin 30)
@@ -97,8 +97,90 @@ uint8_t bandsel = BAND_20M;
 #error "Unsupported clock frequency, must specify 16MHz clock"
 #endif
 
+#include <avr/sleep.h>
+#include <avr/wdt.h>
+
+// function prototypes
+void fastpinMode(uint8_t, uint8_t);
+void fastdigitalWrite(uint8_t, uint8_t);
+int16_t arctan3(int16_t, int16_t);
+int16_t ssb(int16_t);
+void dsp_tx();
+void process_minsky();
+void dsp_tx_cw();
+void wait_us(uint16_t);
+uint8_t delayWithKeySense(uint32_t);
+void lcd_blanks(uint8_t);
+void printsym(uint8_t);
+void smart_cq_stop();
+void smart_cq_start_listen();
+void smart_cq_check();
+void cw_decode();
+void stepsize_showcursor();
+void stepsize_change(int8_t);
+void dec2();
+int16_t process_agc_fast(int16_t);
+int16_t process_agc(int16_t);
+int16_t process_nr(int16_t);
+int16_t auto_nr(int16_t);
+int16_t filt_var(int16_t);
+int16_t slow_dsp(int16_t, int16_t);
+void process(int16_t, int16_t);
+void sdr_rx_00();
+void sdr_rx_01();
+void sdr_rx_02();
+void sdr_rx_03();
+void sdr_rx_04();
+void sdr_rx_05();
+void sdr_rx_06();
+void sdr_rx_07();
+int16_t sdr_rx_common_q();
+int16_t sdr_rx_common_i();
+uint8_t log2(uint16_t);
+void adc_start(uint8_t, bool, uint32_t);
+void adc_stop();
+uint16_t analogSafeRead(uint8_t, uint8_t);
+uint16_t analogSampleMic();
+void timer1_start(uint32_t);
+void timer1_stop();
+void timer2_start(uint32_t);
+void timer2_stop();
+int16_t smeter(int16_t);
+void autotune_start();
+void autotune_print(char *);
+void autotune_sample(int16_t);
+void autotune_finish();
+uint32_t preset_get(uint8_t);
+void preset_print(uint32_t);
+static void submenu_preset();
+static void submenu_cwmsg();
+void submenu_draw();
+void submenu_enter(uint8_t);
+void submenu_exit();
+static void return_to_picker(bool);
+static void preset_store();
+static void picker_apply_preset();
+bool picker_handle_event(uint8_t);
+void picker_encoder(int8_t);
+void start_rx();
+void display_vfo(int32_t);
+uint8_t cw_tx(char);
+uint8_t cw_tx_str(char *);
+void process_encoder_tuning_step(int8_t);
+void printmenuid(uint8_t);
+void initPins();
+void initEncoder();
+void build_lut();
+void band_check();
+void update_PaddleLatch();
+void loadWPM(uint8_t);
+void iambic_keyer();
+
 const char *vfosel_label[] = {"A", "B"};
 const char *mode_label[3] = {"LSB", "USB", "CW "};
+
+#define ONE_SECOND     1000
+#define TWO_SECONDS    2000
 
 #define USERNAME_LENGTH  10
 #define CALLSIGN_LENGTH  10
@@ -141,43 +223,44 @@ enum params_t {
   CWINTERVAL,    // 14
   SEMIQSK,       // 15
   KEY_SWAP,      // 16
-  VFOSEL,        // 17
-  SMETER,        // 18
-  AGC,           // 19
-  NR,            // 20
-  ATT,           // 21
-  ATT2,          // 22
-  NOISE_GATE,    // 23
-  TX_DRIVE,      // 24
-  PWM_MIN,       // 25
-  PWM_MAX,       // 26
-  VFO_XTAL,      // 27
-  IQ_ADJ,        // 28
-  QUAD_ACTIVE,   // 29
-  BAND,          // 30
-  ROTARY_SWAP,   // 31
-  MY_NAME,       // 32
-  MY_CALL,       // 33
-  PRACTICE,      // 34
-  FW_VER,        // 35
+  SMART_CQ,      // 17
+  VFOSEL,        // 18
+  SMETER,        // 19
+  AGC,           // 20
+  NR,            // 21
+  ATT,           // 22
+  ATT2,          // 23
+  NOISE_GATE,    // 24
+  TX_DRIVE,      // 25
+  PWM_MIN,       // 26
+  PWM_MAX,       // 27
+  VFO_XTAL,      // 28
+  IQ_ADJ,        // 29
+  QUAD_ACTIVE,   // 30
+  BAND,          // 31
+  ROTARY_SWAP,   // 32
+  MY_NAME,       // 33
+  MY_CALL,       // 34
+  PRACTICE,      // 35
+  FW_VER,        // 36
 
   // Invisible parameters that are always saved/loaded
-  FREQA,         // 36
-  FREQB,         // 37
-  MODEA,         // 38
-  MODEB,         // 39
+  FREQA,         // 37
+  FREQB,         // 38
+  MODEA,         // 39
+  MODEB,         // 40
 
-  MODE_FILT,     // 40
-  MODE_NR,       // 41
-  MODE_STEP,     // 42
+  MODE_FILT,     // 41
+  MODE_NR,       // 42
+  MODE_STEP,     // 43
 
   // Optional parameters for debug and calibration
-  CALIB,         // 43
-  SR,            // 44
-  CPULOAD,       // 45
-  PARAM_A,       // 46
-  PARAM_B,       // 47
-  PARAM_C,       // 48
+  CALIB,         // 44
+  SR,            // 45
+  CPULOAD,       // 46
+  PARAM_A,       // 47
+  PARAM_B,       // 48
+  PARAM_C,       // 49
 
   // eeprom addresses for the sub-menu vars
   PRESET1 = 100,
@@ -249,87 +332,6 @@ char cw_msg[6][CW_MESSAGE_LENGTH] = {
 #define TX0RX1 0b11111100
 #define TX0RX0 0b11111111
 
-// Iambic Morse Code Keyer Sketch, Contribution by Uli, DL2DBG (c) 2009 Steven
-// T. Elliott Source: http://openqrp.org  p=343 Trimmed by Bill Bishop -
-// wrb[at]wrbishop.com.  This library is free software; you can redistribute it
-// and/or modify it under the terms of the GNU Lesser General Public License as
-// published by the Free Software Foundation; either version 2.1 of the License,
-// or any later version. This library is distributed in the hope that it will be
-// useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
-// General Public License for more details: Free Software Foundation, Inc., 59
-// Temple Place, Suite 330, Boston, MA  02111-1307  U
-
-// keyer control bit definitions
-#define DIT_L     0x01   // Dit latch
-#define DAH_L     0x02   // Dah latch
-#define DIT_PROC  0x04   // Dit is being processed
-#define PDLSWAP   0x08   // 0 for normal, 1 for swap
-#define IAMBICA   0x00   // Iambic A
-#define IAMBICB   0x10   // Iambic B
-
-#define STRAIGHT  0      // Straight  key
-#define IAMBIC_A  1      // Iambic A
-#define IAMBIC_B  2      // Iambic B
-#define ULTIMATIC 3      // Ultimatic mode
-
-uint8_t keyer_speed = 25;
-unsigned long ditTime; // milliseconds per dit
-uint8_t keyerControl;
-uint8_t keyerState;
-uint8_t keyer_mode  = STRAIGHT;
-uint8_t keyer_swap  = NO_SWAP;
-uint8_t last_paddle = 0;  // 0=dit, 1=dah (used by Ultimatic mode)
-uint8_t prev_dit_state = HIGH;
-uint8_t prev_dah_state = HIGH;
-
-uint32_t ktimer;
-uint8_t  key_state;
-
-// State machine states
-enum KSTYPE {
-  IDLE,
-  CHK_DIT,
-  CHK_DAH,
-  KEYED_PREP,
-  KEYED,
-  INTER_ELEMENT
-};
-
-// Latch dit/dah press; also track most recent paddle press for Ultimatic
-void update_PaddleLatch() {
-  uint8_t dit_now = digitalRead(DIT);
-  uint8_t dah_now = digitalRead(DAH);
-  if (dit_now == LOW) {
-    keyerControl |= keyer_swap ? DAH_L : DIT_L;
-    if (prev_dit_state == HIGH) {
-      last_paddle = keyer_swap ? 1 : 0; // new press: update last_paddle
-    }
-  }
-  if (dah_now == LOW) {
-    keyerControl |= keyer_swap ? DIT_L : DAH_L;
-    if (prev_dah_state == HIGH) {
-      last_paddle = keyer_swap ? 0 : 1; // new press: update last_paddle
-    }
-  }
-  prev_dit_state = dit_now;
-  prev_dah_state = dah_now;
-}
-
-// Calculate new time constants based on wpm value
-void loadWPM(uint8_t wpm) {
-  ditTime = (1500) / wpm;  // 1500 = (1200 * 20/16)
-}
-
-static uint8_t practice = false;
-static int8_t prev_mode;
-
-volatile uint8_t vox = 0;
-volatile uint8_t sending_cw_msg = false;
-
-#include <avr/sleep.h>
-#include <avr/wdt.h>
-
 // Custom pinMode replacement using direct register access
 void fastpinMode(uint8_t pin, uint8_t mode) {
   uint8_t bit = digitalPinToBitMask(pin);
@@ -363,6 +365,12 @@ void fastdigitalWrite(uint8_t pin, uint8_t val) {
   }
 }
 
+static uint8_t rx_ph_q = 90;
+static uint8_t practice = false;
+volatile int8_t  volume = 12;
+volatile uint8_t vox = 0;
+volatile uint8_t sending_cw_msg = false;
+
 class LCD : public Print {
 public:
 #define _dn 0 // PD0 to PD3 connect to D4 to D7
@@ -375,7 +383,6 @@ public:
 #define LCD_PREP_NIBBLE(b) (PORTD & ~(0xf << _dn)) | (b) << _dn | 1 << _en
 
   void begin(uint8_t x = 0, uint8_t y = 0) {
-    // bool reinit = (x == 0) && (y == 0);
     DDRD |= 0xf << _dn | 1 << _en; // Make data, EN outputs
     DDRC |= 1 << _rs;
     delayMicroseconds(50000);
@@ -461,16 +468,6 @@ ISR(PCINT2_vect) {
       enc_accum = 0;
     }
   }
-}
-
-// initialise the encoder state machine
-void initEncoder() {
-  enc_state = (digitalRead(ROT_B) << 1) | digitalRead(ROT_A);
-  if (rotary_swap) enc_state = ((enc_state & 1) << 1) | (enc_state >> 1);
-  enc_accum = 0;
-  PCMSK2 |= (1 << PCINT22) | (1 << PCINT23);
-  PCICR  |= (1 << PCIE2);
-  interrupts();
 }
 
 class I2C {
@@ -813,13 +810,14 @@ const char *filt_label[N_FILT + 1] = {"FULL", "3000", "2400", "1800",
 
 const char *stepsize_label[] = {"10M", "1M",  ".5M", "100K", "10K",
                                 "1K",  ".5K", "100", "10",   "1"};
+
 const char *att_label[] = {"0dB",   "-13dB", "-20dB", "-33dB",
                            "-40dB", "-53dB", "-60dB", "-73dB"};
-const char *smode_label[] = {"OFF", "DBM", "S", "SBAR", "WPM"};
 
+const char *smeter_label[] = {"OFF", "DBM", "S", "SBAR", "WPM"};
 const char *agc_label[] = {"OFF", "FAST", "SLOW"};
 const char *cw_tone_label[] = {"600", "700"};
-const char *keyer_mode_label[] = { "STRAIGHT", "IAMBIC A", "IAMBIC B", "ULTIMATIC"};
+const char *keyer_label[] = { "STRAIGHT", "IAMBIC A", "IAMBIC B", "ULTIMATIC"};
 
 enum mode_t { LSB, USB, CW };
 volatile uint8_t mode = USB;
@@ -880,7 +878,7 @@ inline int16_t ssb(int16_t in) {
   else if (ac < -250) ac = -250 - (-250 - ac) / 2;
 
   // Protect the existing 16-bit Hilbert weighted sum under overload.
-  // |v|<=320 => |sum|<=2*320*(2+8+21+16)=30080 < 32767.
+  // |v|<=320 => |sum|<=2*320*(2+8+21+16)=30080 < 32767
   // This is an overload rail, not an ALC or substitute for correct mic level.
   if (ac > 320) ac = 320;
   else if (ac < -320) ac = -320;
@@ -939,7 +937,6 @@ inline int16_t ssb(int16_t in) {
 }
 
 #define MIC_ATTEN  0
-volatile int8_t volume = 12;
 
 // This is the ADC ISR, issued with sample-rate via timer1 compb interrupt.
 // It performs in real-time the ADC sampling, calculation of SSB
@@ -1029,9 +1026,17 @@ const char m2c[] PROGMEM = "~ "
                            "***H*7*G*8*90************?_****\"**.****@***'**-***"
                            "*****;!*)*****,****:****";
 
+// microsecond delay
+void wait_us(uint16_t x) {
+  uint16_t t = ((x * 3) + (x>>1));
+  for (uint16_t i=0; i<t; i++) {
+    asm("");
+  }
+}
+
 uint8_t delayWithKeySense(uint32_t ms) {
-  uint32_t event = millis() + ms;
-  for (; millis() < event;) {
+  uint32_t start = millis();
+  while ((millis() - start) < ms) {
     wdt_reset();
     if (KEY_PRESSED) {
       while (KEY_PRESSED) wdt_reset(); // wait
@@ -1099,7 +1104,7 @@ void lcd_blanks(uint8_t x) {
 }
 
 // print a decoded symbol
-void printsym(bool submit = true) {
+void printsym(uint8_t submit = true) {
   if (sym < 128) {
     char ch = pgm_read_byte_near(m2c + sym);
     if (ch != '*') {
@@ -1126,16 +1131,88 @@ uint32_t lowduration;
 uint32_t laststarttime = 0;
 uint8_t wpm = 25;
 
+// While a repeating CQ is between transmissions
+// listen for a CW reply and cancel the repeat if one is heard.
+// Smart CQ uses the decoder's already-filtered CW state
+// It does not require successful character decoding,
+// only several plausible key-down pulses.
+
+#define SMART_CQ_SETTLE_MS       150UL
+#define SMART_CQ_WINDOW_MS      5000UL
+#define SMART_CQ_MIN_EDGES         6U
+#define SMART_CQ_MIN_ON_MS        20U
+#define SMART_CQ_MAX_ON_MS       500U
+
+uint8_t  smart_cq_enabled   = true;
+uint8_t  smart_cq_listening = false;
+uint8_t  smart_cq_edges = 0;
+uint8_t  smart_cq_prev_state = LOW;
+uint32_t smart_cq_start = 0;
+uint32_t smart_cq_edge_time = 0;
+
+void smart_cq_stop() {
+  smart_cq_listening = false;
+  smart_cq_edges = 0;
+}
+
+void smart_cq_start_listen() {
+  smart_cq_listening = true;
+  smart_cq_edges = 0;
+  smart_cq_prev_state = filteredstate;
+  smart_cq_start = millis();
+  smart_cq_edge_time = smart_cq_start;
+}
+
+void smart_cq_check() {
+  if (!smart_cq_listening) return;
+  if (tx || sending_cw_msg || mode != CW || !cw_msg_event) {
+    smart_cq_stop();
+    return;
+  }
+
+  uint32_t now = millis();
+  if ((now - smart_cq_start) >= SMART_CQ_WINDOW_MS) {
+    smart_cq_stop();
+    return;
+  }
+  if ((now - smart_cq_start) < SMART_CQ_SETTLE_MS) {
+    smart_cq_prev_state = filteredstate;
+    return;
+  }
+
+  if (filteredstate != smart_cq_prev_state) {
+    uint32_t duration = now - smart_cq_edge_time;
+    smart_cq_edge_time = now;
+
+    // Count completed key-down pulses only, and reject very short noise
+    // spikes or implausibly long carriers.
+    if (smart_cq_prev_state == HIGH &&
+        duration >= SMART_CQ_MIN_ON_MS &&
+        duration <= SMART_CQ_MAX_ON_MS) {
+      if (smart_cq_edges < 255) smart_cq_edges++;
+      if (smart_cq_edges >= SMART_CQ_MIN_EDGES) {
+        cw_msg_event = 0;
+        smart_cq_stop();
+        lcd.noCursor();
+        lcd.setCursor(0, 0);
+        lcd.print(F("CW HEARD        "));
+        return;
+      }
+    }
+    smart_cq_prev_state = filteredstate;
+  }
+}
+
+// CW decoder
 inline void cw_decode() {
   int32_t in = _amp32;
   EA(avg, in, (1 << 8));
   realstate = (in > (avg * 1 / 2)); // threshold
-
-  // here we clean up the state with a noise blanker
+  // clean up the state with a noise blanker
   if (realstate != realstatebefore) {
     laststarttime = millis();
   }
-  if ((millis() - laststarttime) > nbtime) {
+  if ((millis() - laststarttime) >= nbtime) {
     if (realstate != filteredstate) {
       filteredstate = realstate;
     }
@@ -1198,7 +1275,7 @@ void dec2() {
       }
     }
   }
-  if (((millis() - startttimelow) > hightimesavg * 6) && (sym > 1)) {
+  if (((millis() - startttimelow) >= hightimesavg * 6) && (sym > 1)) {
     printsym(); // write if no more letters
   }
   filteredstatebefore = filteredstate;
@@ -1288,6 +1365,12 @@ inline int16_t process_nr(int16_t in) {
   static int16_t ea1;
   ea1 = EA(ea1, in, 1 << (nr - 1));
   return ea1;
+}
+
+inline int16_t auto_nr(int16_t in) {
+  static int16_t ea2;
+  ea2 = EA(ea2, in, 2);
+  return ea2;
 }
 
 inline int16_t filt_var(int16_t za0) {
@@ -1383,6 +1466,10 @@ volatile int16_t i, q;
 int16_t v[14]; // Process Q (down-sampled) samples
 int16_t vi[7];
 
+uint8_t autotune_active = false;
+uint8_t autotune_done = false;
+uint8_t autotune_restart = false;
+
 inline int16_t slow_dsp(int16_t i_ac2, int16_t q_ac2) {
   // Post processing I and Q (down-sampled) results here - G8DI mod
   int16_t ac, qh, acm;
@@ -1423,10 +1510,12 @@ inline int16_t slow_dsp(int16_t i_ac2, int16_t q_ac2) {
   vi[5] = vi[6];
   vi[6] = i_ac2; // Delay to match Hilbert transform on Q branch
 
-  // inverting I and Q helps dampening a
-  // feedback-loop between PWM out and ADC inputs
+  // inverting I and Q helps dampening a feedback
+  // between PWM out and ADC inputs
   acm = -id - qh;
   ac = acm;
+  // zero-beat auto-tune sampling
+  if (autotune_active) autotune_sample(auto_nr(ac));
   // set S-Meter level
   static uint8_t absavg256cnt;
   if (!(absavg256cnt--)) {
@@ -1518,9 +1607,6 @@ void process(int16_t i_ac2, int16_t q_ac2) {
 
 static int16_t i_s0za1, i_s0zb0, i_s0zb1, i_s1za1, i_s1zb0, i_s1zb1;
 static int16_t q_s0za1, q_s0zb0, q_s0zb1, q_s1za1, q_s1zb0, q_s1zb1, q_ac2;
-
-void sdr_rx_03();
-void sdr_rx_07();
 
 #define M_SR 1 // CIC N=3
 void sdr_rx_00() {
@@ -1648,6 +1734,48 @@ void adc_stop() {
   ADMUX = (1 << REFS0); // restore reference voltage AREF (5V)
 }
 
+// performs classical analogRead with default Arduino
+// sample-rate and analog reference setting; restores previous settings
+uint16_t analogSafeRead(uint8_t pin, uint8_t ref1v1=false) {
+  noInterrupts();
+  // wait until ADC conversion is complete
+  for (; !(ADCSRA & (1 << ADIF)););
+  uint8_t adcsra = ADCSRA;
+  uint8_t admux = ADMUX;
+  ADCSRA &= ~(1 << ADIE); // disable interrupts when measurement complete
+  ADCSRA |= (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+  if (ref1v1) ADMUX &= ~(1 << REFS0); // restore 1V reference voltage
+  else ADMUX = (1 << REFS0);          // restore 5V reference voltage
+  wait_us(1000);
+  uint16_t val = analogRead(pin);
+  ADCSRA = adcsra;
+  ADMUX = admux;
+  interrupts();
+  return val;
+}
+
+uint16_t analogSampleMic() {
+  uint16_t adc;
+  noInterrupts();
+  // hack: faster conversion rate necessary for VOX
+  ADCSRA = (1<<ADEN) | (((uint8_t)log2((uint8_t)(F_CPU/13/(192307/1)))) & 0x07);
+  if (vox_thresh >= 32)
+    fastdigitalWrite(RX, LOW); // disable RF input
+  uint8_t oldmux = ADMUX;
+  // wait until ADC conversion is complete
+  for (; !(ADCSRA & (1 << ADIF)););
+  ADMUX = admux[2];      // set MUX for next conversion
+  ADCSRA |= (1 << ADSC); // start next ADC conversion
+  // wait until ADC conversion is complete
+  for (; !(ADCSRA & (1 << ADIF)););
+  ADMUX = oldmux;
+  if (vox_thresh >= 32)
+    fastdigitalWrite(RX, HIGH); // enable RF input
+  adc = ADC;
+  interrupts();
+  return adc;
+}
+
 // Timer 1: OC1A and OC1B in PWM mode
 void timer1_start(uint32_t fs) {
   TCCR1A = 0;
@@ -1705,53 +1833,10 @@ const byte fonts[N_FONTS][8] PROGMEM = {
     {0b00000, // 8; TBD
      0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000}};
 
-// performs classical analogRead with default Arduino
-// sample-rate and analog reference setting; restores previous settings
-int analogSafeRead(uint8_t pin, bool ref1v1 = false) {
-  noInterrupts();
-  // wait until ADC conversion is complete
-  for (; !(ADCSRA & (1 << ADIF)););
-  uint8_t adcsra = ADCSRA;
-  uint8_t admux = ADMUX;
-  ADCSRA &= ~(1 << ADIE); // disable interrupts when measurement complete
-  ADCSRA |= (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
-  if (ref1v1) ADMUX &= ~(1 << REFS0); // restore 1V reference voltage
-  else ADMUX = (1 << REFS0);          // restore 5V reference voltage
-  delay(1);
-  int val = analogRead(pin);
-  ADCSRA = adcsra;
-  ADMUX = admux;
-  interrupts();
-  return val;
-}
-
-uint16_t analogSampleMic() {
-  uint16_t adc;
-  noInterrupts();
-  // hack: faster conversion rate necessary for VOX
-  ADCSRA = (1 << ADEN) | (((uint8_t)log2((uint8_t)(F_CPU / 13 / (192307 / 1)))) & 0x07);
-  if (vox_thresh >= 32)
-    fastdigitalWrite(RX, LOW); // disable RF input
-  uint8_t oldmux = ADMUX;
-  // wait until ADC conversion is complete
-  for (; !(ADCSRA & (1 << ADIF)););
-  ADMUX = admux[2];      // set MUX for next conversion
-  ADCSRA |= (1 << ADSC); // start next ADC conversion
-  // wait until ADC conversion is complete
-  for (; !(ADCSRA & (1 << ADIF)););
-  ADMUX = oldmux;
-  if (vox_thresh >= 32)
-    fastdigitalWrite(RX, HIGH); // enable RF input
-  adc = ADC;
-  interrupts();
-  return adc;
-}
-
 #define VFOA  0
 #define VFOB  1
 
 volatile bool change = true;
-volatile bool changedMode = 0;
 volatile int32_t freq = INIT_FREQ;
 static int32_t vfo[] = {INIT_FREQ, INIT_FREQ};
 static uint8_t vfomode[] = {CW, CW};
@@ -1806,11 +1891,157 @@ int16_t smeter(int16_t ref = 0) {
   return dbm;
 }
 
+// =======================================
+// Zero-Beat Auto-Tune
+// =======================================
+
+#define AT_IDLE    0      // idle
+#define AT_WAIT    1      // wait
+#define AT_NHC     3      // negative half cycle
+#define AT_PHC     4      // positive half cycle
+#define AT_DONE    5      // measurement complete
+
+#define AT_THRESH  120    // signal strength
+#define AT_NSAMPL  256    // number of samples
+
+uint8_t autotune_state = AT_IDLE;
+uint8_t zxx_count = 0;    // zero-crossings
+uint8_t first_zxx = 0;
+uint8_t target_zxx = (cw_tone == 0) ? 39 : 46;
+uint8_t autotune_pass = 0;
+
+void autotune_print(char *msg) {
+  lcd.noCursor();
+  lcd.setCursor(11, 1);
+  lcd.print(msg);
+}
+
+void autotune_start() {
+  autotune_restart = false;
+  autotune_pass = 1;
+  first_zxx = 0;
+  target_zxx = (cw_tone == 0) ? 39 : 46;
+  autotune_state  = AT_IDLE;
+  autotune_active = true;
+  autotune_print("ZB");
+}
+
+// auto-tune sampling and zero-crossing detection
+void autotune_sample(int16_t sample) {
+
+  static uint16_t loopcount = 0;  // sample loop count
+  static uint8_t  valid = 0;      // valid sample
+  static uint8_t  nhc_count = 0;  // negative sample count
+  static uint8_t  phc_count = 0;  // positive sample count
+
+  if (abs(sample) > AT_THRESH) valid = 1;
+  else valid = 0;
+
+  switch (autotune_state) {
+    case AT_IDLE:
+      loopcount = 0;
+      nhc_count = 0;
+      phc_count = 0;
+      zxx_count = 0;
+      if (valid && (sample > 0)) {
+        // found positive peak
+        autotune_state = AT_WAIT;
+      }
+      break;
+    case AT_WAIT:
+      loopcount = 0;
+      // wait for zero-cross to negative
+      if (sample < 0) {
+        nhc_count = 1;
+        autotune_state = AT_NHC;
+      }
+      break;
+    case AT_NHC:
+      // was negative .. crosses to positive
+      if ((sample > 0) && nhc_count>1) {
+        zxx_count++;  // zero-crossing
+        nhc_count = 0;
+        autotune_state = AT_PHC;
+      }
+      if (sample < 0) nhc_count++;
+      break;
+    case AT_PHC:
+      // was positive .. crosses to negative
+      if ((sample < 0) && phc_count>1) {
+        zxx_count++;  // zero-crossing
+        phc_count = 0;
+        autotune_state = AT_NHC;
+      }
+      if (sample > 0) phc_count++;
+      break;
+    default:
+      break;
+  }
+  loopcount++;
+  if (loopcount == AT_NSAMPL) {
+    autotune_state = AT_DONE;
+    autotune_active = false;
+  }
+}
+
+void autotune_finish() {
+  autotune_state = AT_IDLE;
+  if (autotune_pass == 1) {
+    // first pass complete
+    first_zxx = zxx_count;
+    autotune_pass = 2;
+    autotune_active = true;
+    return;
+  }
+  // second pass complete
+  autotune_pass = 0;
+  // check for two consistent measurements
+  int16_t delta_zxx = (int16_t)zxx_count - (int16_t)first_zxx;
+  uint8_t diff = (uint8_t)abs(delta_zxx);
+  if (diff <= 1) {
+    // calculate the average zero-crossing count
+    uint8_t avg_zxx = (first_zxx + zxx_count) / 2;
+    // each count represents ~15.26 Hz offset
+    int16_t freq_error = (target_zxx - avg_zxx) * 15;
+    // adjust VFO frequency toward zero-beat
+    freq += freq_error;
+    change = true;
+    band_check();
+    // update VFO frequency
+    si5351.freq(freq + cw_offset, rx_ph_q, 0);
+    display_vfo(freq);
+    // check for large freq adjustment -- 15Hz per bin
+    if (abs(target_zxx - avg_zxx) > 7) {
+      // autotune_print("oo");
+      // wdt_reset();
+      // delay(ONE_SECOND);
+      autotune_restart = true;
+      return;
+    }
+    // display the tuning result
+    if (freq_error > 0) autotune_print("++");
+    else if (freq_error < 0) autotune_print("--");
+    else autotune_print("OK");
+    wdt_reset();
+    delay(ONE_SECOND);
+  } else {
+    // autotune_print("xx");
+    // wdt_reset();
+    // delay(ONE_SECOND);
+    autotune_restart = true;
+    return;
+  }
+  // let the user read the results
+  wdt_reset();
+  show_banner();
+}
+
 // for sub-menus
 #define N_PRESET   8
 #define N_CWMSG    6
 
-uint32_t preset_get(uint8_t i) {  // 0 = empty slot
+// for preset sub-menu
+uint32_t preset_get(uint8_t i) {
   uint32_t eeval = eeprom_read_dword((const uint32_t *)(PRESET_EEPROM + 4 * i));
   uint32_t emode = eeval >> 24;
   uint32_t efreq = eeval & 0xFFFFFFUL;
@@ -1822,6 +2053,7 @@ uint32_t preset_get(uint8_t i) {  // 0 = empty slot
   return eeval;
 }
 
+// for preset sub-menu
 void preset_print(uint32_t v) {
   uint32_t f = v & 0xFFFFFFUL;
   lcd.print(f / 1000000UL); lcd.print('.');
@@ -1833,6 +2065,7 @@ void preset_print(uint32_t v) {
   lcd.print(mode_label[v >> 24]);
 }
 
+// for preset sub-menu
 static void submenu_preset() {
   lcd.noCursor();
   lcd.setCursor(0, 0);
@@ -1852,6 +2085,7 @@ static void submenu_preset() {
   for (; len < 15; len++) lcd.print(' ');
 }
 
+// for cwmsg sub-menu
 static void submenu_cwmsg() {
   lcd.noCursor();
   lcd.setCursor(0, 0);
@@ -1865,6 +2099,7 @@ static void submenu_cwmsg() {
   lcd_blanks(10);
 }
 
+// common for all sub-menus
 void submenu_draw() {
   switch (submenu_type) {
     case SUBMENU_PRESET:   submenu_preset();   break;
@@ -1873,6 +2108,7 @@ void submenu_draw() {
   }
 }
 
+// common for all sub-menus
 void submenu_enter(uint8_t type) {
   submenu_type = type;
   picker_sel = 0;
@@ -1880,6 +2116,7 @@ void submenu_enter(uint8_t type) {
   submenu_draw();
 }
 
+// common for all sub-menus
 void submenu_exit() {
   submenu_type = NOT_SUBMENU;
   show_banner();
@@ -2039,11 +2276,22 @@ inline void display_vfo(int32_t freq) {
       lcd.print(','); // Thousands separator
   }
   lcd.print(' ');
-  lcd.print(mode_label[mode]);
+  if (autotune_active) lcd.print(F("ZB"));
+  else lcd.print(mode_label[mode]);
   lcd.print(' ');
   lcd.setCursor(15,1);
   lcd.print((vox) ? 'V' : 'R');
 }
+
+#define STRAIGHT  0      // Straight  key
+#define IAMBIC_A  1      // Iambic A
+#define IAMBIC_B  2      // Iambic B
+#define ULTIMATIC 3      // Ultimatic mode
+
+uint32_t ditTime;                // milliseconds per dit
+uint8_t  keyer_speed = 25;       // WPM
+uint8_t  keyer_mode  = STRAIGHT;
+uint8_t  keyer_swap  = NO_SWAP;
 
 // Set RX or TX mode, with RIT support and CW offset
 void switch_rxtx(uint8_t tx_enable) {
@@ -2157,9 +2405,9 @@ static char cw_scroll_buf[14] = "            ";
 
 // Transmit a CW character
 uint8_t cw_tx(char ch) {
-  char sym;
-  for (uint8_t j = 0; (sym = pgm_read_byte_near(m2c + j)); j++) {
-    if (sym == ch) {
+  char mch;
+  for (uint8_t j = 0; (mch = pgm_read_byte_near(m2c + j)); j++) {
+    if (mch == ch) {
       wdt_reset();
       // shift characters left in the scroll buffer
       for (uint8_t i = 0; i < 11; i++) {
@@ -2210,7 +2458,8 @@ uint8_t cw_tx_str(char *msg) {
     }
   }
   sending_cw_msg = false;
-  delay(1000);
+  wdt_reset();
+  delay(ONE_SECOND);
   if (submenu_type == SUBMENU_CWMSG) {
     submenu_draw();
   }
@@ -2245,11 +2494,16 @@ void cw_tx_msg(char *msg) {
   // only reschedule if CQ message and not interrupted
   if (!interrupted && cw_msg_interval && (cw_msg[cw_msg_id][0] == 'C') &&
      (cw_msg[cw_msg_id][1] == 'Q')) {
-    cw_msg_event = millis() + (1000 * cw_msg_interval);
+    cw_msg_event = millis() + (1000UL * cw_msg_interval);
+    if (smart_cq_enabled) {
+      smart_cq_start_listen();
+    } else {
+      smart_cq_stop();
+    }
+  } else {
+    smart_cq_stop();
   }
 }
-
-uint8_t rx_ph_q = 90;
 
 void process_encoder_tuning_step(int8_t steps) {
   int32_t stepval = stepsizes[stepsize];
@@ -2268,9 +2522,6 @@ void show_banner() {
   lcd.setCursor(0,0);
   lcd_blanks(16);
 }
-
-volatile uint8_t event;
-volatile uint8_t prev_menumode = NOT_IN_MENU;
 
 #define pgm_cache_item(addr, sz)                                               \
   byte _item[sz];                                                              \
@@ -2477,7 +2728,7 @@ int8_t paramAction(uint8_t action, uint8_t id) {
     paramAction(action, keyer_speed, 0x15, F("KEYER SPEED"), NULL, 1, 60, false);
     break;
   case KEY_MODE:
-    paramAction(action, keyer_mode, 0x16, F("KEYER MODE"), keyer_mode_label, 0, 3, false);
+    paramAction(action, keyer_mode, 0x16, F("KEYER MODE"), keyer_label, 0, 3, false);
     break;
   case VOX:
     paramAction(action, vox, 0x17, F("VOX"), offon_label, 0, 1, false);
@@ -2546,11 +2797,14 @@ int8_t paramAction(uint8_t action, uint8_t id) {
   case KEY_SWAP:
     paramAction(action, keyer_swap, 0x26, F("KEYER SWAP"), offon_label, 0, 1, false);
     break;
+  case SMART_CQ:
+    paramAction(action, smart_cq_enabled, 0x27, F("SMART CQ"), offon_label, 0, 1, false);
+    break;
   case VFOSEL:
     paramAction(action, vfosel, 0x31, F("VFO SELECT"), vfosel_label, 0, 1, false);
     break;
   case SMETER:
-    paramAction(action, smode, 0x32, F("S-METER"), smode_label, 0, _N(smode_label) - 1, false);
+    paramAction(action, smode, 0x32, F("S-METER"), smeter_label, 0, _N(smeter_label) - 1, false);
     break;
   case AGC:
     paramAction(action, agc, 0x33, F("AGC"), agc_label, 0, _N(agc_label) - 1, false);
@@ -2629,7 +2883,7 @@ int8_t paramAction(uint8_t action, uint8_t id) {
       printlabel(action, 0x56, F("FIRMWARE VER"));
       lcd.print(F(VERSION));
       lcd_blanks(1);
-      lcd.print(F(RELDATE));  // release date
+      lcd.print(F(TIMESTAMP));
       lcd_blanks(10);
     } else {
       paramAction(action, eeprom_version, 0, NULL, NULL, 0, 0, false);
@@ -2767,6 +3021,17 @@ void initPins() {
   fastpinMode(PD3, OUTPUT);
 }
 
+// initialise the encoder state machine
+void initEncoder() {
+  enc_state = (digitalRead(ROT_B) << 1) | digitalRead(ROT_A);
+  if (rotary_swap) enc_state = ((enc_state & 1) << 1) | (enc_state >> 1);
+  enc_accum = 0;
+  PCMSK2 |= (1 << PCINT22) | (1 << PCINT23);
+  PCICR  |= (1 << PCIE2);
+  interrupts();
+}
+
+#if defined(DIAG) || defined(DEBUG)
 void fatal(const __FlashStringHelper *msg, int value = 0, char unit = '\0') {
   lcd.setCursor(0,1);
   lcd.print('!');
@@ -2781,6 +3046,7 @@ void fatal(const __FlashStringHelper *msg, int value = 0, char unit = '\0') {
   delay(1500);
   wdt_reset();
 }
+#endif
 
 // refresh LUT based on pwm_min, pwm_max
 void build_lut() {
@@ -2797,6 +3063,144 @@ void band_check() {
   if (freq > FREQ_LIMIT_HIGH) {
     freq = FREQ_LIMIT_HIGH;
     vfo[vfosel] = freq;
+  }
+}
+
+// Iambic Morse Code Keyer Sketch, Contribution by Uli, DL2DBG (c) 2009 Steven
+// T. Elliott Source: http://openqrp.org  p=343 Trimmed by Bill Bishop -
+// wrb[at]wrbishop.com.  This library is free software; you can redistribute it
+// and/or modify it under the terms of the GNU Lesser General Public License as
+// published by the Free Software Foundation; either version 2.1 of the License,
+// or any later version. This library is distributed in the hope that it will be
+// useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
+// General Public License for more details: Free Software Foundation, Inc., 59
+// Temple Place, Suite 330, Boston, MA  02111-1307  U
+
+// keyer control bit definitions
+#define DIT_L     0x01   // Dit latch
+#define DAH_L     0x02   // Dah latch
+#define DIT_PROC  0x04   // Dit is being processed
+#define PDLSWAP   0x08   // 0 for normal, 1 for swap
+#define IAMBICA   0x00   // Iambic A
+#define IAMBICB   0x10   // Iambic B
+
+uint8_t keyerControl;
+uint8_t keyerState;
+uint8_t last_paddle = 0;  // 0=dit, 1=dah (used by Ultimatic mode)
+uint8_t prev_dit_state = HIGH;
+uint8_t prev_dah_state = HIGH;
+
+uint32_t ktimer;
+uint32_t key_start;
+uint8_t  key_state;
+
+// State machine states
+enum KSTYPE {
+  IDLE,
+  CHK_DIT,
+  CHK_DAH,
+  KEYED_PREP,
+  KEYED,
+  INTER_ELEMENT
+};
+
+// Latch dit/dah press; also track most recent paddle press for Ultimatic
+void update_PaddleLatch() {
+  uint8_t dit_now = digitalRead(DIT);
+  uint8_t dah_now = digitalRead(DAH);
+  if (dit_now == LOW) {
+    keyerControl |= keyer_swap ? DAH_L : DIT_L;
+    if (prev_dit_state == HIGH) {
+      last_paddle = keyer_swap ? 1 : 0; // new press: update last_paddle
+    }
+  }
+  if (dah_now == LOW) {
+    keyerControl |= keyer_swap ? DIT_L : DAH_L;
+    if (prev_dah_state == HIGH) {
+      last_paddle = keyer_swap ? 0 : 1; // new press: update last_paddle
+    }
+  }
+  prev_dit_state = dit_now;
+  prev_dah_state = dah_now;
+}
+
+// Calculate new time constants based on wpm value
+void loadWPM(uint8_t wpm) {
+  ditTime = (1500) / wpm;  // 1500 = (1200 * 20/16)
+}
+
+// iambic keyer state machine
+void iambic_keyer() {
+  switch (keyerState) {
+  case IDLE: // Wait for direct or latched paddle press
+    if ((digitalRead(DAH) == LOW) || (digitalRead(DIT) == LOW) ||
+        (keyerControl & 0x03)) {
+      cw_msg_event = 0; // clear cw message event
+      smart_cq_stop();
+      update_PaddleLatch();
+      // Ultimatic: prefer the most recently pressed paddle
+      if (keyer_mode == ULTIMATIC && last_paddle == 1) {
+        keyerState = CHK_DAH;
+      } else {
+        keyerState = CHK_DIT;
+      }
+    }
+    break;
+  case CHK_DIT: // See if the dit paddle was pressed
+    if (keyerControl & DIT_L) {
+      keyerControl |= DIT_PROC;
+      ktimer = ditTime;
+      keyerState = KEYED_PREP;
+    } else {
+      keyerState = CHK_DAH;
+    }
+    break;
+  case CHK_DAH: // See if dah paddle was pressed
+    if (keyerControl & DAH_L) {
+      ktimer = ditTime * 3;
+      keyerState = KEYED_PREP;
+    } else {
+      keyerState = IDLE;
+    }
+    break;
+  case KEYED_PREP: // Assert key down, start timing
+    key_state = HIGH;
+    switch_rxtx(key_state);
+    key_start = millis();             // start of key-down interval
+    keyerControl &= ~(DIT_L + DAH_L); // clear both paddle latch bits
+    keyerState = KEYED;               // next state
+    break;
+  case KEYED: // Wait for timer to expire
+    if ((millis() - key_start) >= ktimer) { // are we at end of key down ?
+      key_state = LOW;
+      switch_rxtx(key_state);
+      ktimer = ditTime;            // inter-element duration
+      key_start = millis();        // start of inter-element interval
+      keyerState = INTER_ELEMENT;  // next state
+    } else if (keyerControl & IAMBICB) {
+      update_PaddleLatch(); // early paddle latch in Iambic B mode
+    }
+    break;
+  case INTER_ELEMENT:
+    // Insert time between dits/dahs
+    update_PaddleLatch();                       // latch paddle state
+    if ((millis() - key_start) >= ktimer) {     // are we at end of inter-space ?
+      if (keyer_mode == ULTIMATIC) {
+        // Ultimatic: return to IDLE so the same element can repeat if still held
+        keyerControl &= ~(DIT_L + DAH_L + DIT_PROC);
+        keyerState = IDLE;
+      } else if (keyerControl & DIT_PROC) {  // was it a dit or dah ?
+        keyerControl &= ~(DIT_L + DIT_PROC); // clear two bits
+        keyerState = CHK_DAH;                // dit done, check for dah
+      } else {
+        keyerControl &= ~(DAH_L); // clear dah latch
+        keyerState = IDLE;        // go idle
+      }
+    }
+    break;
+  default:
+    break;
   }
 }
 
@@ -2944,7 +3348,8 @@ void setup() {
     eeprom_version = EEPROM_VERSION;
     paramAction(SAVE); // save default parameter values
     lcd.setCursor(0,1);
-    lcd.print(F("Reset settings.."));
+    lcd.print(F("FACTORY RESET"));
+    lcd_blanks(5);
     delay(500);
     wdt_reset();
   } else {
@@ -2975,11 +3380,20 @@ void setup() {
   }
   loadWPM(keyer_speed);
   while (DIT_PRESSED || ((mode == CW && keyer_mode) && DAH_PRESSED)) {
-    fatal(F("Check PTT/key"));
+    lcd.setCursor(0,1);
+    lcd.print(F("CHECK PTT !!"));
   }
 }
 
+#define LONG_PRESS 500
+
 void loop() {
+  static uint8_t event = 0;
+  static uint8_t prev_menumode = NOT_IN_MENU;
+  uint8_t changedMode = 0;
+  int8_t _menumode = 0;
+  int8_t encoder_change = 0;
+  uint8_t offset = 0;
   if ((vox) && ((mode == LSB) || (mode == USB))) {
     if (!vox_tx) {
       if (vox_sample++ == 16) {
@@ -2999,14 +3413,13 @@ void loop() {
       delay(32);
     }
   }
-
-  if (((mode == CW) && cwdec && (!tx && !semi_qsk_timeout)) || 
+  if (((mode == CW) && cwdec && (!tx && !semi_qsk_timeout)) ||
       ((submenu_type == SUBMENU_CWMSG) && cwdec && (!tx)))
     cw_decode();
   if ((menumode == NOT_IN_MENU) && (submenu_type == NOT_SUBMENU)) {
     if (cw_event) {
       const char offv[] = {0, 7, 3, 5, 3, 7, 8};
-      uint8_t offset = offv[smode];
+      offset = offv[smode];
       lcd.noCursor();
       cw_event = false;
       lcd.setCursor(0,0);
@@ -3015,100 +3428,28 @@ void loop() {
     } else if ((!semi_qsk_timeout) && (!vox_tx))
       smeter();
   }
-
-  if (mode == CW && keyer_mode != STRAIGHT) {
-    switch (keyerState) {
-    case IDLE: // Wait for direct or latched paddle press
-      if ((digitalRead(DAH) == LOW) || (digitalRead(DIT) == LOW) ||
-          (keyerControl & 0x03)) {
-        cw_msg_event = 0; // clear cw message event
-        update_PaddleLatch();
-        // Ultimatic: prefer the most recently pressed paddle
-        if (keyer_mode == ULTIMATIC && last_paddle == 1) {
-          keyerState = CHK_DAH;
-        } else {
-          keyerState = CHK_DIT;
-        }
-      }
-      break;
-    case CHK_DIT: // See if the dit paddle was pressed
-      if (keyerControl & DIT_L) {
-        keyerControl |= DIT_PROC;
-        ktimer = ditTime;
-        keyerState = KEYED_PREP;
-      } else {
-        keyerState = CHK_DAH;
-      }
-      break;
-    case CHK_DAH: // See if dah paddle was pressed
-      if (keyerControl & DAH_L) {
-        ktimer = ditTime * 3;
-        keyerState = KEYED_PREP;
-      } else {
-        keyerState = IDLE;
-      }
-      break;
-    case KEYED_PREP: // Assert key down, start timing
-      key_state = HIGH;
-      switch_rxtx(key_state);
-      ktimer += millis();               // set ktimer to interval end time
-      keyerControl &= ~(DIT_L + DAH_L); // clear both paddle latch bits
-      keyerState = KEYED;               // next state
-      break;
-    case KEYED:                // Wait for timer to expire
-      if (millis() > ktimer) { // are we at end of key down ?
-        key_state = LOW;
-        switch_rxtx(key_state);
-        ktimer = millis() + ditTime; // inter-element time
-        keyerState = INTER_ELEMENT;  // next state
-      } else if (keyerControl & IAMBICB) {
-        update_PaddleLatch(); // early paddle latch in Iambic B mode
-      }
-      break;
-    case INTER_ELEMENT:
-      // Insert time between dits/dahs
-      update_PaddleLatch();                    // latch paddle state
-      if (millis() > ktimer) {                 // are we at end of inter-space ?
-        if (keyer_mode == ULTIMATIC) {
-          // Ultimatic: return to IDLE so the same element can repeat if still held
-          keyerControl &= ~(DIT_L + DAH_L + DIT_PROC);
-          keyerState = IDLE;
-        } else if (keyerControl & DIT_PROC) {  // was it a dit or dah ?
-          keyerControl &= ~(DIT_L + DIT_PROC); // clear two bits
-          keyerState = CHK_DAH;                // dit done, check for dah
-        } else {
-          keyerControl &= ~(DAH_L); // clear dah latch
-          keyerState = IDLE;        // go idle
-        }
-      }
-      break;
-    default:
-      break;
-    }
+  if (mode == CW && keyer_mode) {
+    iambic_keyer();  // call the iambic keyer
   } else {
-    uint8_t pin = ((mode == CW) && (keyer_swap)) ? DAH : DIT;
-    if (!vox_tx) //  ONLY if VOX not active, then check DIT/DAH (fix for VOX to
-                 //  prevent RFI feedback through EMI on DIT or DAH line)
-      if (!digitalRead(pin)) { // PTT/DIT keys transmitter
-        cw_msg_event = 0;       // clear cw message event
-        switch_rxtx(1);         // Switch to TX mode
+    uint8_t pin = ((mode == CW) && keyer_swap) ? DAH : DIT;
+    if (!vox_tx)
+      // if VOX not active, then check DIT/DAH
+      if (!digitalRead(pin)) {
+        cw_msg_event = 0;        // clear cw message event
+        smart_cq_stop();
+        switch_rxtx(1);
         do {
           wdt_reset();
-          delay((mode == CW)
-                    ? 10
-                    : 100); // keep the tx keyed for a while before sensing
-                            // (helps against RFI issues on DAH/DAH line)
-          if (BUTTON_PRESSED)
-            break; // break if button is pressed (to prevent potential lock-up)
+          delay((mode == CW) ? 10 : 100);
+          if (BUTTON_PRESSED) break;
         } while (!digitalRead(pin)); // until released
         switch_rxtx(0);
       }
   }
-
-  if ((semi_qsk_timeout) && (millis() > semi_qsk_timeout)) {
-    switch_rxtx(0);
-  } // delayed QSK RX
-
+  smart_cq_check();
+  if ((semi_qsk_timeout) && ((int32_t)(millis() - semi_qsk_timeout) >= 0)) {
+    switch_rxtx(0); // delayed QSK RX
+  }
   // button-left, button-right, button-encoder
   // single-click, double-click, push-long, push-and-turn
   if (BUTTON_PRESSED) {
@@ -3118,9 +3459,9 @@ void loop() {
            PLC))) { // hack: if there was long-push before, then fast forward
       uint16_t adcval = analogSafeRead(BUTTONS);
       event = SC;
-      int32_t t0 = millis();
+      uint32_t t0 = millis();
       while (BUTTON_PRESSED) { // until released or long-press
-        if ((millis() - t0) > 300) {
+        if ((millis() - t0) > LONG_PRESS) {
           event = PL;
           break;
         }
@@ -3170,7 +3511,6 @@ void loop() {
         return_to_picker(false);   // discard changes
         break;
       }
-      int8_t _menumode;
       if (menumode == NOT_IN_MENU) {
         _menumode = SELECT_MENU;
         in_settings = false;
@@ -3197,6 +3537,7 @@ void loop() {
       menumode = _menumode;
       break;
     case BL | DC:
+      // does nothing
       break;
     case BR | SC: // Mode change - Button Right, Single Click
       if (menumode >= SELECT_VALUE && (menu >= CWMSG1 && menu <= CWMSG6)) {
@@ -3272,6 +3613,11 @@ void loop() {
         default: break;
       }
       break;
+    case BE | DC:
+      // zero-beat auto-tune on double-click
+      if ((menumode == NOT_IN_MENU) && mode == CW && !(tx || vox_tx || rit))
+        autotune_start();
+      break;
     case BE | PL:
       stepsize_change(-1);
       break;
@@ -3293,7 +3639,7 @@ void loop() {
   if (changedMode) {
     changedMode = false;
     if (menumode == NOT_IN_MENU) {
-      prev_mode = mode;
+      uint8_t prev_mode = mode;
       mode++;
       if (mode > CW)  mode = LSB;
       if (mode == CW) nr = 0;
@@ -3311,23 +3657,25 @@ void loop() {
     } else {
       if (menumode == SELECT_MENU) {
         if (in_settings) {
-          // Right-click while browsing Settings returns to Main menu at 1.10 Settings
+          // Right-click while browsing Settings
+          // returns to Main menu at 1.10 Settings
           in_settings = false;
           menu = SETTINGS;
         } else {
           menumode = NOT_IN_MENU;
         }
       } else if (menumode >= SELECT_VALUE) {
-        // Right-click while editing a value saves and returns to the current menu list
+        // Right-click while editing a value saves
+        // and returns to the current menu list
         menumode = SELECT_MENU;
         change = true;
         paramAction(SAVE, menu);
       }
     }
   }
-
-  if ((menumode) || (prev_menumode != menumode)) { // Show parameter and value
-    int8_t encoder_change = encoder_val;
+  // Show parameter and value
+  if ((menumode) || (prev_menumode != menumode)) {
+    encoder_change = encoder_val;
     if ((menumode == SELECT_MENU) && encoder_change) {
       uint8_t min_id = in_settings ? SETTINGS_MENU_START : MAIN_MENU_START;
       uint8_t max_id = in_settings ? SETTINGS_MENU_END   : MAIN_MENU_END;
@@ -3491,14 +3839,20 @@ void loop() {
       si5351.SendPLLRegisterBulk();
     }
   }
-  if (save_event_time && (millis() > save_event_time)) {
+  if (save_event_time && ((int32_t)(millis() - save_event_time) >= 0)) {
     paramAction(SAVE, (vfosel) ? FREQB : FREQA); // save vfoa/b changes
     save_event_time = 0;
   }
-  // Check for start of next CW repeating beacon
-  if ((mode == CW) && (cw_msg_event) && (millis() > cw_msg_event)) {
+  // check for start of next CW repeating beacon
+  if ((mode == CW) && (cw_msg_event) && ((int32_t)(millis() - cw_msg_event) >= 0)) {
+    smart_cq_stop();
     cw_tx_msg(cw_msg[cw_msg_id]);
   }
+  // check for zero-beat auto-tune
+  if (autotune_state == AT_DONE) autotune_finish();
+  // check for restart of zero-beat auto-tune
+  if (autotune_restart) autotune_start();
+
   wdt_reset();
 }
 
