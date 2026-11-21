@@ -35,7 +35,7 @@
 // ============================================================================
 
 #define VERSION "1.00d"            // firmware version
-#define TIMESTAMP "11182049"       // firmware timestamp
+#define TIMESTAMP "11210931"       // firmware timestamp
 #define EEPROM_VERSION   2         // track eeprom layout changes
 
 // pin definitions
@@ -109,7 +109,7 @@ void dsp_tx();
 void process_minsky();
 void dsp_tx_cw();
 void wait_us(uint16_t);
-uint8_t delayWithKeySense(uint32_t);
+bool delayWithKeySense(uint16_t);
 void lcd_blanks(uint8_t);
 void printsym(uint8_t);
 void smart_cq_stop();
@@ -855,7 +855,7 @@ inline int16_t arctan3(int16_t q, int16_t i) {
 uint8_t lut[256];
 volatile uint8_t amp;
 volatile uint8_t vox_thresh = (1 << 2);
-volatile uint8_t drive = 2;
+volatile uint8_t txdrive = 2;
 
 static uint8_t quad_enabled = false;
 volatile uint8_t quad = 0;
@@ -898,13 +898,13 @@ inline int16_t ssb(int16_t in) {
 
   _vox(_amp > vox_thresh);
 #ifdef FIXEDSCALE
-  if (drive >= 8 || _amp >= (255u >> drive))
+  if (txdrive >= 8 || _amp >= (255u >> txdrive))
     _amp = 255;
   else
-    _amp <<= drive;
+    _amp <<= txdrive;
 #else
-  _amp = _amp << (drive);
-  _amp = ((_amp > 255) || (drive == 8)) ? 255 : _amp;
+  _amp = _amp << (txdrive);
+  _amp = ((_amp > 255) || (txdrive == 8)) ? 255 : _amp;
 #endif // FIXEDSCALE
   amp = (tx) ? lut[_amp] : 0;
 
@@ -1034,16 +1034,16 @@ void wait_us(uint16_t x) {
   }
 }
 
-uint8_t delayWithKeySense(uint32_t ms) {
+bool delayWithKeySense(uint16_t ms) {
   uint32_t start = millis();
   while ((millis() - start) < ms) {
     wdt_reset();
     if (KEY_PRESSED) {
       while (KEY_PRESSED) wdt_reset(); // wait
-      return 1;
+      return true;
     }
   }
-  return 0;
+  return false;
 }
 
 uint8_t cw_msg_interval = 5; // CW message repeat interval
@@ -2288,7 +2288,7 @@ inline void display_vfo(int32_t freq) {
 #define IAMBIC_B  2      // Iambic B
 #define ULTIMATIC 3      // Ultimatic mode
 
-uint32_t ditTime;                // milliseconds per dit
+uint16_t ditTime;                // milliseconds per dit
 uint8_t  keyer_speed = 25;       // WPM
 uint8_t  keyer_mode  = STRAIGHT;
 uint8_t  keyer_swap  = NO_SWAP;
@@ -2822,7 +2822,7 @@ int8_t paramAction(uint8_t action, uint8_t id) {
     paramAction(action, vox_thresh, 0x37, F("NOISE GATE"), NULL, 0, 255, false);
     break;
   case TX_DRIVE:
-    paramAction(action, drive, 0x41, F("TX DRIVE"), NULL, 0, 8, false);
+    paramAction(action, txdrive, 0x41, F("TX DRIVE"), NULL, 0, 8, false);
     break;
   case PWM_MIN:
     paramAction(action, pwm_min, 0x42, F("PA BIAS MIN"), NULL, 0, pwm_max - 1, false);
@@ -2891,22 +2891,17 @@ int8_t paramAction(uint8_t action, uint8_t id) {
     break;
 
   // =========================================================================
-  // FIXED EEPROM SUB-ITEMS (Presets & CW Messages)
+  //  EEPROM SUB-ITEMS (Presets & CW Messages)
   // =========================================================================
   case PRESET1: case PRESET2: case PRESET3: case PRESET4:
-  case PRESET5: case PRESET6: case PRESET7: case PRESET8: {
-    uint8_t idx = id - PRESET1;
-    uint16_t addr = PRESET_EEPROM + 4 * idx;
-    if (action == LOAD) {
+  case PRESET5: case PRESET6: case PRESET7: case PRESET8:
+    if (action == SAVE) {
+      uint8_t  idx  = id - PRESET1;
+      uint16_t addr = PRESET_EEPROM + 4 * idx;
       uint32_t v = preset_get(idx);
       eeprom_write_dword((uint32_t *)addr, v);
-    } else if (action == SAVE) {
-      uint32_t v = preset_get(idx);
-      eeprom_write_dword((uint32_t *)addr, v);
-    } else if (action == SKIP) {
     }
     break;
-  }
 
   case CWMSG1: case CWMSG2: case CWMSG3:
   case CWMSG4: case CWMSG5: case CWMSG6: {
@@ -2916,20 +2911,14 @@ int8_t paramAction(uint8_t action, uint8_t id) {
       eeprom_read_block(cw_msg[idx], (void *)addr, CW_MESSAGE_LENGTH);
     } else if (action == SAVE) {
       for (uint8_t i = CW_MESSAGE_LENGTH; i > 0; i--) {
-        if (cw_msg[idx][i-1] == ' ' || cw_msg[idx][i-1] == 0)
-          cw_msg[idx][i-1] = 0;
+        if (cw_msg[idx][i-1] == ' ') cw_msg[idx][i-1] = 0;
         else break;
       }
       eeprom_write_block(cw_msg[idx], (void *)addr, CW_MESSAGE_LENGTH);
     } else if (action == SKIP) {
     } else {
-      const __FlashStringHelper *lbl =
-          (idx==0) ? F("CQ MSG 1") :
-          (idx==1) ? F("CW MSG 2") :
-          (idx==2) ? F("CW MSG 3") :
-          (idx==3) ? F("CW MSG 4") :
-          (idx==4) ? F("CW MSG 5") : F("CW MSG 6");
-      paramAction(action, cw_msg[idx], 0x19, lbl, CW_MESSAGE_LENGTH);
+      const __FlashStringHelper *lbl = F("EDIT CW MSG");
+      paramAction(action, cw_msg[id-CWMSG1], 0x19, lbl, CW_MESSAGE_LENGTH);
     }
     break;
   }
@@ -3130,7 +3119,7 @@ void loadWPM(uint8_t wpm) {
   ditTime = (1500) / wpm;  // 1500 = (1200 * 20/16)
 }
 
-// iambic keyer state machine
+// Iambic keyer state machine
 void iambic_keyer() {
   switch (keyerState) {
   case IDLE: // Wait for direct or latched paddle press
@@ -3337,7 +3326,7 @@ void setup() {
   }
 #endif // DIAG
 
-  drive = 4; // Init settings
+  txdrive = 4;
   cw_offset = tones[cw_tone];
 
   // Load parameters from EEPROM, reset to factory defaults
