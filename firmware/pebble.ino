@@ -35,7 +35,7 @@
 // ============================================================================
 
 #define VERSION "1.00d"            // firmware version
-#define TIMESTAMP "11210931"       // firmware timestamp
+#define TIMESTAMP "11252224"       // firmware timestamp
 #define EEPROM_VERSION   2         // track eeprom layout changes
 
 // pin definitions
@@ -65,6 +65,9 @@
 #define DIT_PRESSED    !digitalRead(DIT)
 #define DAH_PRESSED    !digitalRead(DAH)
 #define KEY_PRESSED    (DIT_PRESSED || DAH_PRESSED)
+
+#define LONG_PRESS   500   // long button press (ms)
+#define XTRA_PRESS  1000   // extra long button press (ms)
 
 #define NO_SWAP   0
 #define SWAP      1
@@ -111,7 +114,7 @@ void dsp_tx_cw();
 void wait_us(uint16_t);
 bool delayWithKeySense(uint16_t);
 void lcd_blanks(uint8_t);
-void printsym(uint8_t);
+void printsym();
 void smart_cq_stop();
 void smart_cq_start_listen();
 void smart_cq_check();
@@ -1058,6 +1061,7 @@ uint8_t cw_msg_id = 0;       // selected message
 
 volatile uint8_t menumode = NOT_IN_MENU;
 bool in_settings = false;
+bool vfo_locked  = false;
 
 // button event codes
 enum event_t {
@@ -1068,6 +1072,7 @@ enum event_t {
   DC  = 0x02,  // double click
   PL  = 0x04,  // push long
   PLC = 0x05,  // push long continuous
+  PX  = 0x06,  // push extra long
   PT  = 0x0C   // push and turn
 };
 
@@ -1080,7 +1085,7 @@ enum picker_t {
 uint8_t submenu_type = NOT_SUBMENU;
 uint8_t picker_sel  = 0;   // current slot within the submenu
 
-// menu / parameter action codes (needed by picker before paramAction is defined)
+// menu parameter actions
 enum action_t { UPDATE, UPDATE_MENU, NEXT_MENU, LOAD, SAVE, SKIP, NEXT_CH };
 volatile int8_t menu = 0; // current parameter id selected in menu
 
@@ -1104,7 +1109,7 @@ void lcd_blanks(uint8_t x) {
 }
 
 // print a decoded symbol
-void printsym(uint8_t submit = true) {
+void printsym() {
   if (sym < 128) {
     char ch = pgm_read_byte_near(m2c + sym);
     if (ch != '*') {
@@ -1114,7 +1119,7 @@ void printsym(uint8_t submit = true) {
       cw_event = true; // update display
     }
   }
-  if (submit) sym = 1;
+  sym = 1;
 }
 
 bool realstate = LOW;
@@ -1564,7 +1569,7 @@ inline int16_t slow_dsp(int16_t i_ac2, int16_t q_ac2) {
 typedef void (*func_t)(void);
 volatile func_t func_ptr;
 #undef R    // Decimating 2nd Order CIC filter
-#define R 4 // Rate change from 62500/2 kSPS to 7812.5SPS, providing 12dB gain
+#define R 4 // 62500/2 kSPS to 7812.5SPS, providing 12dB gain
 
 volatile uint8_t admux[3];
 volatile int16_t ocomb, qh;
@@ -1573,11 +1578,9 @@ volatile uint8_t rx_state = 0;
 #pragma GCC push_options
 #pragma GCC optimize("Ofast") // compiler-optimization for speed
 
-static uint8_t tc = 0;
-
 void process(int16_t i_ac2, int16_t q_ac2) {
+  static uint8_t tc = 0;
   static int16_t ac3;
-
   static int16_t ozd1, ozd2; // Audio output stage
   if (_init) {
     ac3 = 0;
@@ -1587,22 +1590,12 @@ void process(int16_t i_ac2, int16_t q_ac2) {
   }
   int16_t od1 = ac3 - ozd1; // Comb section
   ocomb = od1 - ozd2;
-
-#define OUTLET 1
-#ifdef OUTLET
-  if (tc++ == 0) // prevent recursion : If tc == 0 enable interrupts
-#endif
-
-  interrupts();
-
+  // prevent re-entrancy .. enable interrupts only if tc==0
+  if (tc++ == 0) interrupts();
   ozd2 = od1;
   ozd1 = ac3;
-
   ac3 = slow_dsp(i_ac2, q_ac2);
-
-#ifdef OUTLET
   tc--;
-#endif
 }
 
 static int16_t i_s0za1, i_s0zb0, i_s0zb1, i_s1za1, i_s1zb0, i_s1zb1;
@@ -1816,22 +1809,23 @@ void timer2_stop() {        // Stop Timer 2 interrupt
 
 #define N_FONTS 8
 const byte fonts[N_FONTS][8] PROGMEM = {
-    {0b01000, // 1; logo
-     0b00100, 0b01010, 0b00101, 0b01010, 0b00100, 0b01000, 0b00000},
-    {0b00000, // 2; s-meter, 0 bars
-     0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000},
-    {0b10000, // 3; s-meter, 1 bars
-     0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000},
-    {0b10000, // 4; s-meter, 2 bars
-     0b10000, 0b10100, 0b10100, 0b10100, 0b10100, 0b10100, 0b10100},
-    {0b10000, // 5; s-meter, 3 bars
-     0b10000, 0b10101, 0b10101, 0b10101, 0b10101, 0b10101, 0b10101},
-    {0b01100, // 6; vfo-a
-     0b10010, 0b11110, 0b10010, 0b10010, 0b00000, 0b00000, 0b00000},
-    {0b11100, // 7; vfo-b
-     0b10010, 0b11100, 0b10010, 0b11100, 0b00000, 0b00000, 0b00000},
-    {0b00000, // 8; TBD
-     0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000}};
+  // 1) logo
+  {0x08, 0x04, 0x0A, 0x05, 0x0A, 0x04, 0x08, 0x00},
+  // 2) s-meter, 0 bars
+  {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+  // 3) s-meter, 1 bars
+  {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+  // 4) s-meter, 2 bars
+  {0x10, 0x10, 0x14, 0x14, 0x14, 0x14, 0x14, 0x14},
+  // 5) s-meter, 3 bars
+  {0x10, 0x10, 0x15, 0x15, 0x15, 0x15, 0x15, 0x15},
+  // 6) vfo-a
+  {0x0C, 0x12, 0x1E, 0x12, 0x12, 0x00, 0x00, 0x00},
+  // 7) vfo-b
+  {0x1C, 0x12, 0x1C, 0x12, 0x1C, 0x00, 0x00, 0x00},
+  // 8) vfo-locked
+  {0x0C, 0x12, 0x1E, 0x1E, 0x1E, 0x00, 0x00, 0x00}
+};
 
 #define VFOA  0
 #define VFOB  1
@@ -2251,13 +2245,20 @@ int16_t _centiGain = 0;
 uint32_t semi_qsk_timeout = 0;
 
 // display frequency
-inline void display_vfo(int32_t freq) {
+void display_vfo(int32_t freq) {
   if (submenu_type != NOT_SUBMENU) {
     submenu_draw();
     return;
   }
+  char ch;
+  if (vfo_locked) ch = '\x08';
+  else if (rit) ch = ' ';
+  else {
+    if (vfosel) ch = '\x07';
+    else ch = '\x06';
+  }
   lcd.setCursor(0,1);
-  lcd.print((rit) ? ' ' : (vfosel ? '\x07' : '\x06'));
+  lcd.print(ch);
   int32_t scale = 10e6;
   if (rit && !tx) {
     freq = rit;     // Show RIT RX offset only
@@ -2278,7 +2279,6 @@ inline void display_vfo(int32_t freq) {
   lcd.print(' ');
   if (autotune_active) lcd.print(F("ZB"));
   else lcd.print(mode_label[mode]);
-  lcd.print(' ');
   lcd.setCursor(15,1);
   lcd.print((vox) ? 'V' : 'R');
 }
@@ -3374,8 +3374,6 @@ void setup() {
   }
 }
 
-#define LONG_PRESS 500
-
 void loop() {
   static uint8_t event = 0;
   static uint8_t prev_menumode = NOT_IN_MENU;
@@ -3443,31 +3441,33 @@ void loop() {
   // single-click, double-click, push-long, push-and-turn
   if (BUTTON_PRESSED) {
     // Left-/Right-/Rotary-button (while not already pressed)
-    if (!((event & PL) ||
-          (event &
-           PLC))) { // hack: if there was long-push before, then fast forward
+    if (!((event & PL) || (event & PLC))) {
+      // if initial press then read buttons
       uint16_t adcval = analogSafeRead(BUTTONS);
       event = SC;
       uint32_t t0 = millis();
-      while (BUTTON_PRESSED) { // until released or long-press
-        if ((millis() - t0) > LONG_PRESS) {
-          event = PL;
+      // wait until released or extra-long-press
+      while (BUTTON_PRESSED) {
+        uint32_t held = millis() - t0;
+        if ((held > LONG_PRESS) && (event != PT)) event = PL;
+        if ((held > XTRA_PRESS) && (event != PT)) {
+          event = PX;
+          lcd.noCursor();
           break;
         }
         wdt_reset();
       }
-      delay(10); // debounce
-      for (; (event != PL) && ((millis() - t0) < 500);) {
-        // until 2nd press or timeout
+      // double-click event check
+      for (; (event != PL) && (event != PX) && ((millis() - t0) < 500);) {
         if (BUTTON_PRESSED) {
           event = DC;
           break;
         }
         wdt_reset();
       }
-      while (BUTTON_PRESSED) {  // until released, or encoder
-                                // is turned while longpress
-        if (encoder_val && event == PL) {
+      // wait until released or turned while longpress
+      while (BUTTON_PRESSED) {
+        if (encoder_val && ((event == PL) || (event == PX))) {
           event = PT;
           break;
         }
@@ -3486,13 +3486,6 @@ void loop() {
       event = 0; // picker consumed the event
     }
     switch (event) {
-    case BL | PL:  // Called when menu button pressed
-    case BL | PLC: // or kept pressed
-      menumode = SELECT_VALUE;
-      break;
-    case BL | PT:
-      menumode = SELECT_MENU;
-      break;
     case BL | SC:
       // While editing a CW message string:
       // Menu = cancel (discard) and return to the picker on the same slot.
@@ -3609,6 +3602,17 @@ void loop() {
       break;
     case BE | PL:
       stepsize_change(-1);
+      break;
+    case BE | PX:
+      vfo_locked = !vfo_locked;
+      encoder_val = 0;
+      event = 0;
+      display_vfo(freq);
+      while (BUTTON_PRESSED) {
+        // wait until released
+        delay(10);
+        wdt_reset();
+      }
       break;
     case BE | PT:
       while (BUTTON_PRESSED) {
@@ -3804,7 +3808,7 @@ void loop() {
       // hack for reversing rotary-encoder direction
       if (rotary_swap != rotxxx_swap) rotary_swap = rotxxx_swap;
       if (encoder_val) {
-        process_encoder_tuning_step(encoder_val);
+        if (!vfo_locked) process_encoder_tuning_step(encoder_val);
         encoder_val = 0;
       }
     }
